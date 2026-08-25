@@ -1,0 +1,17 @@
+node_modules/
+out/
+dist/
+release/
+outputs/
+coverage/
+*.log
+*.rbproxy
+.env
+.env.*
+!.env.example
+.vite/
+.tsbuild/
+.idea/
+.vscode/
+Thumbs.db
+resources/dev-catalog.json
