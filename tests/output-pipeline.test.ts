@@ -14,7 +14,7 @@ describe('artwork derivatives', () => {
     const folder = await mkdtemp(join(tmpdir(), 'rb-images-'))
     const pipeline = new SharpArtworkPipeline(folder)
     const input = await sharp({ create: { width: 744, height: 1039, channels: 3, background: '#2ec4b6' } }).png().toBuffer()
-    const result = await pipeline.createMpcDerivative('test', input)
+    const result = await pipeline.createMpcDerivative('riftbound', 'test', input)
     expect([result.width, result.height]).toEqual([816, 1110])
     expect(result.sha1).toMatch(/^[A-F0-9]{40}$/)
     expect((await sharp(result.filePath).metadata()).hasAlpha).toBe(false)
@@ -28,8 +28,8 @@ describe('artwork derivatives', () => {
       <rect x="120" y="1026" width="504" height="12" fill="#3857e8"/>
     </svg>`)
     const pipeline = new SharpArtworkPipeline(folder)
-    const result = await pipeline.createMpcDerivative('transparent-card', new Uint8Array(source))
-    const proof = await pipeline.createMpcPlacementProof(result)
+    const result = await pipeline.createMpcDerivative('riftbound', 'transparent-card', new Uint8Array(source))
+    const proof = await pipeline.createMpcPlacementProof('riftbound', result)
     const { data, info } = await sharp(result.filePath).raw().toBuffer({ resolveWithObject: true })
     const pixel = (x: number, y: number) => [...data.subarray((y * info.width + x) * info.channels, (y * info.width + x) * info.channels + 3)]
     expect(proof).toMatchObject({
@@ -55,7 +55,7 @@ describe('artwork derivatives', () => {
       <rect width="10" height="966" fill="#20f050"/>
       <rect x="662" width="10" height="966" fill="#f0d020"/>
     </svg>`)
-    const result = await new SharpArtworkPipeline(folder).createMpcDerivative('safe-edge-card', new Uint8Array(source))
+    const result = await new SharpArtworkPipeline(folder).createMpcDerivative('riftbound', 'safe-edge-card', new Uint8Array(source))
     const { data, info } = await sharp(result.filePath).raw().toBuffer({ resolveWithObject: true })
     const pixel = (x: number, y: number) => [...data.subarray((y * info.width + x) * info.channels, (y * info.width + x) * info.channels + 3)]
     expect(pixel(408, 72)[0]).toBeGreaterThan(200)
@@ -75,8 +75,8 @@ describe('artwork derivatives', () => {
       <rect x="736" width="8" height="1039" fill="#f0d020"/>
     </svg>`)
     const pipeline = new SharpArtworkPipeline(folder)
-    const result = await pipeline.createMpcDerivative('riftbound-max-fit', new Uint8Array(source))
-    const proof = await pipeline.createMpcPlacementProof(result)
+    const result = await pipeline.createMpcDerivative('riftbound', 'riftbound-max-fit', new Uint8Array(source))
+    const proof = await pipeline.createMpcPlacementProof('riftbound', result)
     expect(proof.sourceRect).toEqual({ x: 62, y: 72, width: 692, height: 966 })
     expect(proof.sourceContainedInSafeArea).toBe(false)
     expect(proof.placementVerified).toBe(true)
@@ -89,8 +89,26 @@ describe('artwork derivatives', () => {
   it('rotates landscape images into portrait output', async () => {
     const folder = await mkdtemp(join(tmpdir(), 'rb-landscape-'))
     const input = await sharp({ create: { width: 1039, height: 744, channels: 3, background: '#ef8354' } }).png().toBuffer()
-    const result = await new SharpArtworkPipeline(folder).createMpcDerivative('landscape', input)
+    const result = await new SharpArtworkPipeline(folder).createMpcDerivative('riftbound', 'landscape', input)
     expect(result.height).toBeGreaterThan(result.width)
+  })
+
+  it('uses the Traditional Poker 822x1122 profile for Magic artwork', async () => {
+    const folder = await mkdtemp(join(tmpdir(), 'mtg-profile-'))
+    const source = Buffer.from(`<svg width="745" height="1040" xmlns="http://www.w3.org/2000/svg"><rect width="745" height="1040" rx="32" fill="#17130f"/><rect x="18" y="18" width="709" height="1004" fill="none" stroke="#f0c860" stroke-width="8"/></svg>`)
+    const pipeline = new SharpArtworkPipeline(folder)
+    const result = await pipeline.createMpcDerivative('mtg', 'scryfall-png', new Uint8Array(source))
+    const proof = await pipeline.createMpcPlacementProof('mtg', result)
+    expect([result.width, result.height]).toEqual([822, 1122])
+    expect(proof).toMatchObject({
+      trimRect: { x: 36, y: 36, width: 750, height: 1050 },
+      safeRect: { x: 72, y: 72, width: 678, height: 978 },
+      sourceRect: { x: 61, y: 72, width: 701, height: 978 },
+      opaque: true,
+      transparentPixels: 0,
+      sourcePreserved: true,
+      placementVerified: true
+    })
   })
 })
 
@@ -154,6 +172,7 @@ function manifest(quantity: number): ProjectManifestV1 {
   const now = new Date().toISOString()
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
+    game: 'riftbound',
     projectId: '22222222-2222-4222-8222-222222222222', title: 'PDF Test', createdAt: now, updatedAt: now,
     decks: [{ id: 'deck', title: 'PDF Test', entries: [{ id: 'entry', rawName: 'Test', quantity, section: 'main', resolvedCardId: 'test', candidateCardIds: ['test'], resolution: 'resolved', allocations: [{ id: 'allocation', quantity, front: { kind: 'custom', assetId: 'front', archivePath: 'assets/front.png', displayName: 'Front' } }] }] }],
     globalBack: { kind: 'custom', assetId: 'back', archivePath: 'assets/back.png', displayName: 'Back' },

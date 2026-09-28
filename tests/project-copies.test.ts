@@ -29,6 +29,7 @@ function makeManifest(): ProjectManifest {
   const official = (cardId: string) => ({ kind: 'official' as const, cardId, imageUrl: `https://example.com/${cardId}.png` })
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
+    game: 'riftbound',
     projectId: '33333333-3333-4333-8333-333333333333',
     title: 'Combined', createdAt: now, updatedAt: now,
     decks: [

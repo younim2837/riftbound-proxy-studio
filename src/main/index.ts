@@ -3,21 +3,24 @@ import { randomUUID } from 'node:crypto'
 import { extname, join } from 'node:path'
 import { readFile } from 'node:fs/promises'
 import sharp from 'sharp'
-import { DevelopmentCatalogProvider } from './services/catalog-provider.js'
-import { RiftboundDeckImporter } from './services/deck-importer.js'
+import { DevelopmentCatalogProvider, ScryfallCatalogProvider } from './services/catalog-provider.js'
+import { MtgDeckImporter, RiftboundDeckImporter } from './services/deck-importer.js'
 import { resolveImportedDeck } from './services/resolver.js'
 import { ZipProjectStore } from './services/project-store.js'
 import { ArtworkSourceResolver, SharpArtworkPipeline } from './services/artwork-pipeline.js'
 import { PrintPdfExporter } from './services/pdf-exporter.js'
 import { PlaywrightMpcAutomationDriver } from './services/mpc-automation.js'
 import type {
+  CardRecord,
   ImportResult,
+  GameId,
   MpcAutomationRequest,
   MpcProofRequest,
   PdfExportRequest,
   PrintPreviewRequest,
   ProjectDocument
 } from '../shared/contracts.js'
+import { GAME_PROFILES } from '../shared/contracts.js'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -29,7 +32,7 @@ function createWindow(): void {
     minHeight: 720,
     backgroundColor: '#0d1117',
     show: false,
-    title: 'Riftbound Proxy Studio',
+    title: 'Proxy Studio',
     webPreferences: {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
@@ -68,7 +71,9 @@ function registerIpc(cacheDirectory: string): void {
     cacheDirectory,
     join(app.getAppPath(), 'resources', 'dev-catalog-v1.json')
   )
-  const importer = new RiftboundDeckImporter()
+  const scryfall = new ScryfallCatalogProvider(cacheDirectory)
+  const riftboundImporter = new RiftboundDeckImporter()
+  const mtgImporter = new MtgDeckImporter()
   const projects = new ZipProjectStore()
   const pipeline = new SharpArtworkPipeline(cacheDirectory)
   const resolver = new ArtworkSourceResolver(cacheDirectory)
@@ -80,11 +85,18 @@ function registerIpc(cacheDirectory: string): void {
     platform: process.platform,
     cacheDirectory
   }))
-  ipcMain.handle('catalog:load', (_event, forceRefresh?: boolean) => catalog.load(forceRefresh))
-  ipcMain.handle('import:text', (_event, text: string) => importer.importText(text))
-  ipcMain.handle('import:code', (_event, code: string) => importer.importDeckCode(code))
-  ipcMain.handle('import:piltover', (_event, url: string) => importer.importPiltoverUrl(url))
-  ipcMain.handle('import:resolve', (_event, result: ImportResult, cards) => resolveImportedDeck(result, cards))
+  ipcMain.handle('catalog:load', (_event, game: GameId, forceRefresh?: boolean) => game === 'mtg' ? scryfall.load() : catalog.load(forceRefresh))
+  ipcMain.handle('catalog:search', (_event, game: GameId, query: string) => game === 'mtg' ? scryfall.search(query) : catalog.load().then((snapshot) => searchLocalCatalog(snapshot.cards, query)))
+  ipcMain.handle('catalog:printings', (_event, game: GameId, cardId: string) => game === 'mtg' ? scryfall.printings(cardId) : catalog.load().then((snapshot) => {
+    const card = snapshot.cards.find((candidate) => candidate.id === cardId)
+    return card ? snapshot.cards.filter((candidate) => candidate.baseCode === card.baseCode || candidate.name === card.name) : []
+  }))
+  ipcMain.handle('import:text', (_event, game: GameId, text: string) => game === 'mtg' ? mtgImporter.importText(text) : riftboundImporter.importText(text))
+  ipcMain.handle('import:code', (_event, code: string) => riftboundImporter.importDeckCode(code))
+  ipcMain.handle('import:piltover', (_event, url: string) => riftboundImporter.importPiltoverUrl(url))
+  ipcMain.handle('import:resolve', async (_event, game: GameId, result: ImportResult, cards) => game === 'mtg'
+    ? scryfall.resolveImport(result)
+    : { entries: resolveImportedDeck(result, cards), cards })
 
   ipcMain.handle('artwork:choose', async () => {
     const result = await dialog.showOpenDialog(requireWindow(), {
@@ -106,18 +118,18 @@ function registerIpc(cacheDirectory: string): void {
     }
   })
 
-  ipcMain.handle('artwork:default-back', async () => ({
-    assetId: 'built-in-proxy-back',
-    archivePath: 'assets/built-in-proxy-back.png',
+  ipcMain.handle('artwork:default-back', async (_event, game: GameId) => ({
+    assetId: `built-in-${game}-proxy-back`,
+    archivePath: `assets/built-in-${game}-proxy-back.png`,
     displayName: 'Proxy - Not For Sale',
-    bytes: new Uint8Array(await createDefaultProxyBack())
+    bytes: new Uint8Array(await createDefaultProxyBack(game))
   }))
 
   ipcMain.handle('project:save', async (_event, document: ProjectDocument) => {
     const result = await dialog.showSaveDialog(requireWindow(), {
-      title: 'Save Riftbound Proxy Studio project',
-      defaultPath: `${safeFileName(document.manifest.title)}.rbproxy`,
-      filters: [{ name: 'Riftbound Proxy Studio Project', extensions: ['rbproxy'] }]
+      title: 'Save Proxy Studio project',
+      defaultPath: `${safeFileName(document.manifest.title)}.proxyproject`,
+      filters: [{ name: 'Proxy Studio Project', extensions: ['proxyproject', 'rbproxy'] }]
     })
     if (result.canceled || !result.filePath) return null
     await projects.save(document, result.filePath)
@@ -126,9 +138,9 @@ function registerIpc(cacheDirectory: string): void {
 
   ipcMain.handle('project:open', async () => {
     const result = await dialog.showOpenDialog(requireWindow(), {
-      title: 'Open Riftbound Proxy Studio project',
+      title: 'Open Proxy Studio project',
       properties: ['openFile'],
-      filters: [{ name: 'Riftbound Proxy Studio Project', extensions: ['rbproxy'] }]
+      filters: [{ name: 'Proxy Studio Project', extensions: ['proxyproject', 'rbproxy'] }]
     })
     const path = result.filePaths[0]
     if (result.canceled || !path) return null
@@ -157,8 +169,8 @@ function registerIpc(cacheDirectory: string): void {
       ?? selected?.entry.allocations[0]
     if (!selected || !allocation) throw new Error('Choose a resolved card before rendering the MPC proof.')
     const source = await resolver.load(allocation.front, request.customAssets)
-    const derivative = await pipeline.createMpcDerivative(source.sourceId, source.bytes)
-    const proof = await pipeline.createMpcPlacementProof(derivative)
+    const derivative = await pipeline.createMpcDerivative(request.manifest.game, source.sourceId, source.bytes)
+    const proof = await pipeline.createMpcPlacementProof(request.manifest.game, derivative)
     return {
       png: new Uint8Array(await readFile(derivative.filePath)),
       deckId: selected.deck.id,
@@ -181,12 +193,14 @@ function requireWindow(): BrowserWindow {
 }
 
 function safeFileName(value: string): string {
-  return value.replace(/[<>:"/\\|?*\u0000-\u001F]/g, '-').replace(/\s+/g, ' ').trim() || 'riftbound-project'
+  return value.replace(/[<>:"/\\|?*\u0000-\u001F]/g, '-').replace(/\s+/g, ' ').trim() || 'proxy-project'
 }
 
-async function createDefaultProxyBack(): Promise<Buffer> {
+async function createDefaultProxyBack(game: GameId): Promise<Buffer> {
+  const profile = GAME_PROFILES[game]
+  const label = game === 'mtg' ? 'MAGIC PLAYTEST' : 'RIFTBOUND PLAYTEST'
   const svg = `
-    <svg width="744" height="1038" viewBox="0 0 744 1038" xmlns="http://www.w3.org/2000/svg">
+    <svg width="${profile.trimWidthPx}" height="${profile.trimHeightPx}" viewBox="0 0 744 1038" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <radialGradient id="bg" cx="50%" cy="42%" r="75%">
           <stop offset="0" stop-color="#1e4b57"/>
@@ -204,7 +218,13 @@ async function createDefaultProxyBack(): Promise<Buffer> {
       <text x="372" y="716" fill="#54d3c2" font-family="Arial, sans-serif" font-size="27" font-weight="700" text-anchor="middle" letter-spacing="4">PLAYTEST CARD</text>
       <line x1="190" y1="758" x2="554" y2="758" stroke="#d8ad5f" stroke-width="2"/>
       <text x="372" y="820" fill="#f5f7fa" font-family="Arial, sans-serif" font-size="25" text-anchor="middle" letter-spacing="3">NOT FOR SALE</text>
-      <text x="372" y="918" fill="#a8b4c2" font-family="Arial, sans-serif" font-size="18" text-anchor="middle">Riftbound Proxy Studio</text>
+      <text x="372" y="918" fill="#a8b4c2" font-family="Arial, sans-serif" font-size="18" text-anchor="middle">${label} · PROXY STUDIO</text>
     </svg>`
   return sharp(Buffer.from(svg)).png().toBuffer()
+}
+
+function searchLocalCatalog(cards: CardRecord[], query: string) {
+  const needle = query.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  if (!needle) return []
+  return cards.filter((card) => `${card.code} ${card.publicCode} ${card.name} ${card.setName}`.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, ' ').includes(needle)).slice(0, 75)
 }

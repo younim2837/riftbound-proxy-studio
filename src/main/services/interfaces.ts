@@ -7,7 +7,8 @@ import type {
   MpcPlacementProof,
   PdfExportRequest,
   PdfExportResult,
-  ProjectDocument
+  ProjectDocument,
+  GameId
 } from '../../shared/contracts.js'
 
 export interface CardCatalogProvider {
@@ -22,9 +23,10 @@ export interface DeckImporter {
 }
 
 export interface ArtworkPipeline {
-  createMpcDerivative(sourceId: string, bytes: Uint8Array, landscape?: boolean): Promise<ImageDerivative>
-  createMpcPlacementProof(derivative: ImageDerivative): Promise<MpcPlacementProof>
+  createMpcDerivative(game: GameId, sourceId: string, bytes: Uint8Array, landscape?: boolean): Promise<ImageDerivative>
+  createMpcPlacementProof(game: GameId, derivative: ImageDerivative): Promise<MpcPlacementProof>
   createPdfDerivative(
+    game: GameId,
     sourceId: string,
     bytes: Uint8Array,
     bleedMm: number,

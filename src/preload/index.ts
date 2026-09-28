@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
   CardRecord,
+  GameId,
   ImportResult,
   MpcAutomationEvent,
   MpcAutomationRequest,
@@ -13,13 +14,15 @@ import type {
 
 const api: RendererApi = {
   getAppInfo: () => ipcRenderer.invoke('app:info'),
-  loadCatalog: (forceRefresh) => ipcRenderer.invoke('catalog:load', forceRefresh),
-  importText: (text) => ipcRenderer.invoke('import:text', text),
+  loadCatalog: (game, forceRefresh) => ipcRenderer.invoke('catalog:load', game, forceRefresh),
+  searchCatalog: (game: GameId, query: string) => ipcRenderer.invoke('catalog:search', game, query),
+  loadPrintings: (game: GameId, cardId: string) => ipcRenderer.invoke('catalog:printings', game, cardId),
+  importText: (game, text) => ipcRenderer.invoke('import:text', game, text),
   importDeckCode: (code) => ipcRenderer.invoke('import:code', code),
   importPiltoverUrl: (url) => ipcRenderer.invoke('import:piltover', url),
-  resolveImport: (result: ImportResult, catalog: CardRecord[]) => ipcRenderer.invoke('import:resolve', result, catalog),
+  resolveImport: (game: GameId, result: ImportResult, catalog: CardRecord[]) => ipcRenderer.invoke('import:resolve', game, result, catalog),
   chooseArtwork: () => ipcRenderer.invoke('artwork:choose'),
-  getDefaultBack: () => ipcRenderer.invoke('artwork:default-back'),
+  getDefaultBack: (game) => ipcRenderer.invoke('artwork:default-back', game),
   saveProject: (document: ProjectDocument) => ipcRenderer.invoke('project:save', document),
   openProject: () => ipcRenderer.invoke('project:open'),
   exportPdf: (request: PdfExportRequest) => ipcRenderer.invoke('pdf:export', request),

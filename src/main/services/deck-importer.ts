@@ -147,6 +147,72 @@ export class RiftboundDeckImporter implements DeckImporter {
   }
 }
 
+const MTG_SECTION_NAMES: Record<string, DeckSection> = {
+  deck: 'main',
+  main: 'main',
+  'main deck': 'main',
+  maindeck: 'main',
+  commander: 'commander',
+  commanders: 'commander',
+  companion: 'companion',
+  sideboard: 'sideboard',
+  maybeboard: 'maybeboard',
+  considering: 'maybeboard',
+  token: 'tokens',
+  tokens: 'tokens'
+}
+
+export class MtgDeckImporter {
+  importText(input: string): ImportResult {
+    const warnings: ImportResult['warnings'] = []
+    const lines: ImportedDeckLine[] = []
+    let section: DeckSection = 'main'
+
+    for (const [index, rawValue] of input.replaceAll('\r', '').split('\n').entries()) {
+      const raw = rawValue.trim()
+      if (!raw || raw.startsWith('#') || raw.startsWith('//')) continue
+      const heading = raw.replace(/:$/, '').trim().toLowerCase()
+      if (MTG_SECTION_NAMES[heading]) {
+        section = MTG_SECTION_NAMES[heading]
+        continue
+      }
+      const parsed = parseMtgDeckLine(raw, index + 1, section)
+      if (parsed) lines.push(parsed)
+      else warnings.push({ lineNumber: index + 1, message: `Could not parse: ${raw}` })
+    }
+    if (lines.length === 0) warnings.push({ message: 'No Magic card lines were found.' })
+    return { lines, warnings }
+  }
+}
+
+export function parseMtgDeckLine(
+  raw: string,
+  lineNumber: number,
+  section: DeckSection = 'main'
+): ImportedDeckLine | null {
+  const quantityMatch = /^(\d+)\s*[x×]?\s+(.+)$/.exec(raw.trim())
+  const suffixMatch = /^(.+?)\s+[x×]\s*(\d+)$/i.exec(raw.trim())
+  const quantity = Number(quantityMatch?.[1] ?? suffixMatch?.[2])
+  let body = (quantityMatch?.[2] ?? suffixMatch?.[1] ?? '').trim()
+  if (!quantity || quantity < 1 || quantity > 612 || !body) return null
+
+  body = body.replace(/\s+\*F\*$/i, '').trim()
+  const metadata = /^(.*?)\s+(?:\(([A-Z0-9]+)\)|\[([A-Z0-9]+)\])\s+([A-Z0-9★]+)(?:\s+.*)?$/i.exec(body)
+  const name = (metadata?.[1] ?? body).trim()
+  const requestedSetCode = (metadata?.[2] ?? metadata?.[3])?.toUpperCase()
+  const requestedCollectorNumber = metadata?.[4]
+  if (!name) return null
+  return {
+    lineNumber,
+    raw,
+    name,
+    quantity,
+    section,
+    ...(requestedSetCode ? { requestedSetCode } : {}),
+    ...(requestedCollectorNumber ? { requestedCollectorNumber } : {})
+  }
+}
+
 export function normalizeCardName(value: string): string {
   return value
     .normalize('NFKD')

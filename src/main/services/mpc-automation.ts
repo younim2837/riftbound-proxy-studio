@@ -6,15 +6,15 @@ import type {
   MpcAutomationEvent,
   MpcAutomationRequest,
   MpcAutomationStage,
+  MpcStock,
   ProjectManifest
 } from '../../shared/contracts.js'
-import { MAX_MPC_CARDS } from '../../shared/contracts.js'
+import { GAME_PROFILES, MAX_MPC_CARDS } from '../../shared/contracts.js'
 import { expandProjectCopies, projectCardCount, unresolvedEntryCount } from '../../shared/project-copies.js'
 import { projectManifestSchema } from '../../shared/schemas.js'
 import type { MpcAutomationDriver } from './interfaces.js'
 import { ArtworkSourceResolver, SharpArtworkPipeline } from './artwork-pipeline.js'
 
-const MPC_START_URL = 'https://www.makeplayingcards.com/design/custom-blank-card.html'
 const MPC_ACCEPT_URL = 'https://www.makeplayingcards.com/products/pro_item_process_flow.aspx'
 
 interface FaceJob {
@@ -53,6 +53,7 @@ export class PlaywrightMpcAutomationDriver implements MpcAutomationDriver {
     try {
       emit('preflight', 'Preparing print-safe images…')
       const manifest = projectManifestSchema.parse(request.manifest) as unknown as ProjectManifest
+      const gameProfile = GAME_PROFILES[manifest.game]
       const count = projectCardCount(manifest)
       if (count < 1) throw new Error('The project has no cards.')
       if (count > MAX_MPC_CARDS) throw new Error(`MPC projects are limited to ${MAX_MPC_CARDS} cards.`)
@@ -76,11 +77,11 @@ export class PlaywrightMpcAutomationDriver implements MpcAutomationDriver {
       })
       const page = this.context.pages()[0] ?? (await this.context.newPage())
       page.on('dialog', (dialog) => void dialog.accept())
-      await page.goto(MPC_START_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+      await page.goto(gameProfile.mpcStartUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 })
       this.assertNotCancelled()
 
-      emit('configuring-project', 'Selecting 63×88 mm, A35, non-foil settings…')
-      await this.configureProject(page, count)
+      emit('configuring-project', `Selecting ${gameProfile.cardWidthMm}×${gameProfile.cardHeightMm} mm, ${manifest.mpcSettings.stock}, non-foil settings…`)
+      await this.configureProject(page, count, manifest.mpcSettings.stock)
       let editorFrame = await this.openFrontEditor(page, count)
 
       emit('uploading-fronts', 'Uploading front images…', 0, fronts.length)
@@ -124,9 +125,9 @@ export class PlaywrightMpcAutomationDriver implements MpcAutomationDriver {
     this.context = null
   }
 
-  private async configureProject(page: Page, count: number): Promise<void> {
+  private async configureProject(page: Page, count: number, stock: MpcStock): Promise<void> {
     await page.locator('#dro_paper_type').waitFor({ state: 'attached', timeout: 30_000 })
-    await selectOptionContaining(page, '#dro_paper_type', 'A35')
+    await selectOptionContaining(page, '#dro_paper_type', stock)
     await selectQuantityBracket(page, '#dro_choosesize', count)
     const finish = page.locator('#dro_product_effect')
     if (await finish.count()) {
@@ -242,7 +243,7 @@ export class PlaywrightMpcAutomationDriver implements MpcAutomationDriver {
       const selection = face === 'front' ? copy.front : copy.back
       if (!selection) continue
       const source = await this.resolver.load(selection, customAssets)
-      const derivative = await this.pipeline.createMpcDerivative(source.sourceId, source.bytes)
+      const derivative = await this.pipeline.createMpcDerivative(manifest.game, source.sourceId, source.bytes)
       const current = jobs.get(derivative.sha1)
       if (current) current.slots.push(slot)
       else jobs.set(derivative.sha1, { filePath: derivative.filePath, slots: [slot] })

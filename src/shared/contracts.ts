@@ -1,13 +1,81 @@
-export const PROJECT_SCHEMA_VERSION = 2 as const
+export const PROJECT_SCHEMA_VERSION = 3 as const
 export const MAX_MPC_CARDS = 612
 
+export type GameId = 'riftbound' | 'mtg'
 export type CardOrientation = 'portrait' | 'landscape'
-export type DeckSection = 'main' | 'sideboard' | 'runes' | 'legend' | 'battlefields' | 'other'
+export type DeckSection =
+  | 'main'
+  | 'sideboard'
+  | 'commander'
+  | 'companion'
+  | 'maybeboard'
+  | 'tokens'
+  | 'runes'
+  | 'legend'
+  | 'battlefields'
+  | 'other'
 export type PageSize = 'letter' | 'a4'
 export type PrintMode = 'fronts' | 'duplex'
+export type CardFace = 'front' | 'back'
+export type ImageQuality = 'highres' | 'fallback' | 'missing'
+export const MPC_STOCK_CODES = ['S30', 'S33', 'A35'] as const
+export type MpcStock = (typeof MPC_STOCK_CODES)[number]
+
+export interface GameProfile {
+  id: GameId
+  label: string
+  cardWidthMm: number
+  cardHeightMm: number
+  trimWidthPx: number
+  trimHeightPx: number
+  mpcCanvasWidthPx: number
+  mpcCanvasHeightPx: number
+  mpcBleedPx: 36
+  mpcSafeInsetPx: 36
+  mpcMaxHorizontalSafeOverscanPx: number
+  mpcProduct: MpcProduct
+  mpcStartUrl: string
+}
+
+export type MpcProduct = 'custom-game-cards-63x88' | 'custom-game-cards-traditional-poker'
+
+export const GAME_PROFILES: Record<GameId, GameProfile> = {
+  riftbound: {
+    id: 'riftbound',
+    label: 'Riftbound',
+    cardWidthMm: 63,
+    cardHeightMm: 88,
+    trimWidthPx: 744,
+    trimHeightPx: 1038,
+    mpcCanvasWidthPx: 816,
+    mpcCanvasHeightPx: 1110,
+    mpcBleedPx: 36,
+    mpcSafeInsetPx: 36,
+    mpcMaxHorizontalSafeOverscanPx: 12,
+    mpcProduct: 'custom-game-cards-63x88',
+    mpcStartUrl: 'https://www.makeplayingcards.com/design/custom-blank-card.html'
+  },
+  mtg: {
+    id: 'mtg',
+    label: 'Magic: The Gathering',
+    cardWidthMm: 63.5,
+    cardHeightMm: 88.9,
+    trimWidthPx: 750,
+    trimHeightPx: 1050,
+    mpcCanvasWidthPx: 822,
+    mpcCanvasHeightPx: 1122,
+    mpcBleedPx: 36,
+    mpcSafeInsetPx: 36,
+    mpcMaxHorizontalSafeOverscanPx: 12,
+    mpcProduct: 'custom-game-cards-traditional-poker',
+    mpcStartUrl: 'https://www.makeplayingcards.com/design/custom-blank-card-traditional-size.html'
+  }
+}
 
 export interface CardRecord {
+  game: GameId
   id: string
+  identityId: string
   code: string
   publicCode: string
   setCode: string
@@ -20,7 +88,15 @@ export interface CardRecord {
   isVariant: boolean
   baseCode: string
   imageUrl: string
+  backImageUrl?: string
   imageHash?: string
+  imageQuality?: ImageQuality
+  language?: string
+  layout?: string
+  faceNames?: string[]
+  releasedAt?: string
+  artist?: string
+  treatments?: string[]
 }
 
 export interface ImportedDeckLine {
@@ -30,6 +106,8 @@ export interface ImportedDeckLine {
   quantity: number
   section: DeckSection
   requestedCode?: string
+  requestedSetCode?: string
+  requestedCollectorNumber?: string
 }
 
 export interface ImportWarning {
@@ -47,6 +125,7 @@ export interface OfficialArtworkSelection {
   kind: 'official'
   cardId: string
   imageUrl: string
+  face?: CardFace
 }
 
 export interface CustomArtworkSelection {
@@ -89,19 +168,20 @@ export interface PrintSettings {
   bleedMm: number
   cropMarks: boolean
   dpi: 300
-  cardWidthMm: 63
-  cardHeightMm: 88
+  cardWidthMm: number
+  cardHeightMm: number
 }
 
 export interface MpcSettings {
-  product: 'custom-game-cards-63x88'
-  stock: 'A35'
+  product: MpcProduct
+  stock: MpcStock
   finish: 'MPC game card finish'
   foil: false
 }
 
 export interface ProjectManifest {
   schemaVersion: typeof PROJECT_SCHEMA_VERSION
+  game: GameId
   projectId: string
   title: string
   createdAt: string
@@ -125,7 +205,13 @@ export interface CatalogSnapshot {
   cards: CardRecord[]
   source: string
   fetchedAt: string
-  developmentOnly: true
+  game: GameId
+  developmentOnly: boolean
+}
+
+export interface ResolvedImport {
+  entries: DeckEntry[]
+  cards: CardRecord[]
 }
 
 export interface PdfExportRequest {
@@ -202,8 +288,8 @@ export interface PrintPreviewResult {
 }
 
 export interface MpcPlacementProof {
-  width: 816
-  height: 1110
+  width: number
+  height: number
   opaque: boolean
   transparentPixels: number
   bleedPx: 36
@@ -277,13 +363,15 @@ export interface AppInfo {
 
 export interface RendererApi {
   getAppInfo(): Promise<AppInfo>
-  loadCatalog(forceRefresh?: boolean): Promise<CatalogSnapshot>
-  importText(text: string): Promise<ImportResult>
+  loadCatalog(game: GameId, forceRefresh?: boolean): Promise<CatalogSnapshot>
+  searchCatalog(game: GameId, query: string): Promise<CardRecord[]>
+  loadPrintings(game: GameId, cardId: string): Promise<CardRecord[]>
+  importText(game: GameId, text: string): Promise<ImportResult>
   importDeckCode(code: string): Promise<ImportResult>
   importPiltoverUrl(url: string): Promise<ImportResult>
-  resolveImport(result: ImportResult, catalog: CardRecord[]): Promise<DeckEntry[]>
+  resolveImport(game: GameId, result: ImportResult, catalog: CardRecord[]): Promise<ResolvedImport>
   chooseArtwork(): Promise<{ assetId: string; archivePath: string; displayName: string; bytes: Uint8Array } | null>
-  getDefaultBack(): Promise<{ assetId: string; archivePath: string; displayName: string; bytes: Uint8Array }>
+  getDefaultBack(game: GameId): Promise<{ assetId: string; archivePath: string; displayName: string; bytes: Uint8Array }>
   saveProject(document: ProjectDocument): Promise<{ filePath: string } | null>
   openProject(): Promise<ProjectDocument | null>
   exportPdf(request: PdfExportRequest): Promise<PdfExportResult | null>
@@ -309,4 +397,20 @@ export const DEFAULT_MPC_SETTINGS: MpcSettings = {
   stock: 'A35',
   finish: 'MPC game card finish',
   foil: false
+}
+
+export function defaultPrintSettings(game: GameId): PrintSettings {
+  const profile = GAME_PROFILES[game]
+  return {
+    ...DEFAULT_PRINT_SETTINGS,
+    cardWidthMm: profile.cardWidthMm,
+    cardHeightMm: profile.cardHeightMm
+  }
+}
+
+export function defaultMpcSettings(game: GameId): MpcSettings {
+  return {
+    ...DEFAULT_MPC_SETTINGS,
+    product: GAME_PROFILES[game].mpcProduct
+  }
 }

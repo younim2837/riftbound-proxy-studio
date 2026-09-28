@@ -1,8 +1,8 @@
 {
   "name": "riftbound-proxy-studio",
-  "version": "0.2.0",
+  "version": "0.3.2",
   "private": true,
-  "description": "A private desktop prototype for preparing Riftbound proxy projects for PDF and MakePlayingCards.",
+  "description": "A desktop studio for preparing Riftbound and Magic playtest projects for PDF and MakePlayingCards.",
   "main": "./out/main/index.js",
   "type": "module",
   "scripts": {
@@ -10,6 +10,7 @@
     "build": "npm run typecheck && electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
+    "test:live:scryfall": "set RUN_SCRYFALL_LIVE=1&& vitest run tests/scryfall-live.test.ts",
     "test:watch": "vitest",
     "pack": "npm run build && electron-builder --win nsis portable",
     "pack:dir": "npm run build && electron-builder --win --dir"
@@ -38,8 +39,8 @@
     "vitest": "4.1.11"
   },
   "build": {
-    "appId": "studio.riftbound.proxy",
-    "productName": "Riftbound Proxy Studio",
+    "appId": "studio.cardproxy.desktop",
+    "productName": "Proxy Studio",
     "asar": true,
     "files": [
       "out/**/*",

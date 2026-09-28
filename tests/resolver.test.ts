@@ -56,7 +56,7 @@ describe('card resolver', () => {
 
 function card(id: string, code: string, isVariant: boolean): CardRecord {
   return {
-    id, code, publicCode: code, setCode: 'OGN', setName: 'Origins', collectorNumber: '7', name: 'Ahri',
+    game: 'riftbound', id, identityId: 'OGN-007', code, publicCode: code, setCode: 'OGN', setName: 'Origins', collectorNumber: '7', name: 'Ahri',
     type: 'Unit', rarity: 'Rare', orientation: 'portrait', isVariant, baseCode: 'OGN-007',
     imageUrl: `https://cmsassets.rgpub.io/sanity/images/dsfx7636/game_data_live/${'a'.repeat(40)}-744x1039.png`
   }

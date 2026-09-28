@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   extractPiltoverDeck,
+  MtgDeckImporter,
   normalizeCardName,
+  parseMtgDeckLine,
   parseDeckLine,
   RiftboundDeckImporter
 } from '../src/main/services/deck-importer.js'
@@ -35,6 +37,29 @@ describe('deck text import', () => {
       requestedCode: 'VEN-SP1A',
       name: 'Kai Sa',
       section: 'sideboard'
+    })
+  })
+})
+
+describe('Magic deck text import', () => {
+  it('parses Arena, Commander, sideboard, and set-qualified lines', () => {
+    const result = new MtgDeckImporter().importText(`Commander\n1 Atraxa, Praetors' Voice (2X2) 190\n\nDeck\n4 Lightning Bolt\n1 Delver of Secrets // Insectile Aberration\n\nSideboard\n2 Negate [M20] 69`)
+    expect(result.warnings).toEqual([])
+    expect(result.lines).toMatchObject([
+      { quantity: 1, name: "Atraxa, Praetors' Voice", section: 'commander', requestedSetCode: '2X2', requestedCollectorNumber: '190' },
+      { quantity: 4, name: 'Lightning Bolt', section: 'main' },
+      { quantity: 1, name: 'Delver of Secrets // Insectile Aberration', section: 'main' },
+      { quantity: 2, name: 'Negate', section: 'sideboard', requestedSetCode: 'M20', requestedCollectorNumber: '69' }
+    ])
+  })
+
+  it('parses a Moxfield-style line directly', () => {
+    expect(parseMtgDeckLine('1x Sol Ring (CMM) 396', 4, 'main')).toMatchObject({
+      lineNumber: 4,
+      quantity: 1,
+      name: 'Sol Ring',
+      requestedSetCode: 'CMM',
+      requestedCollectorNumber: '396'
     })
   })
 })

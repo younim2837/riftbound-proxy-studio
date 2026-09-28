@@ -4,23 +4,33 @@ import type {
   ArtworkAllocation,
   CardRecord,
   DeckEntry,
+  GameId,
   ImportResult,
   MpcAutomationEvent,
   MpcPlacementProof,
+  MpcStock,
   PrintPreviewResult,
   ProjectDocument,
   ProjectDeck,
   ProjectManifest
 } from '../../shared/contracts'
 import { projectCardCount, unresolvedEntryCount } from '../../shared/project-copies'
+import { installDevPreviewApi } from './dev-preview'
 import {
-  DEFAULT_MPC_SETTINGS,
-  DEFAULT_PRINT_SETTINGS,
+  GAME_PROFILES,
   MAX_MPC_CARDS,
-  PROJECT_SCHEMA_VERSION
+  PROJECT_SCHEMA_VERSION,
+  defaultMpcSettings,
+  defaultPrintSettings
 } from '../../shared/contracts'
 
 const STEPS = ['Import', 'Resolve', 'Customize', 'Review', 'Export'] as const
+const MPC_STOCK_OPTIONS: Array<{ id: MpcStock; title: string; detail: string }> = [
+  { id: 'S30', title: 'Professional standard', detail: 'Blue core · smooth finish' },
+  { id: 'S33', title: 'Superior smooth', detail: 'Black core · smooth finish' },
+  { id: 'A35', title: 'Thick standard', detail: 'The existing Proxy Studio default' }
+]
+installDevPreviewApi()
 type Step = (typeof STEPS)[number]
 type ImportMode = 'text' | 'piltover' | 'code'
 
@@ -35,7 +45,16 @@ Main Deck:
 3 OGN-043 Charm
 3 SFD-032 Disarming Rake`
 
+const MTG_SAMPLE_DECK = `Commander
+1 Atraxa, Praetors' Voice (2X2) 190
+
+Deck
+1 Sol Ring
+1 Swords to Plowshares
+1 Delver of Secrets // Insectile Aberration`
+
 export default function App() {
+  const [game, setGame] = useState<GameId>('riftbound')
   const [step, setStep] = useState<Step>('Import')
   const [catalog, setCatalog] = useState<CardRecord[]>([])
   const [catalogSource, setCatalogSource] = useState('Loading development catalog…')
@@ -50,15 +69,20 @@ export default function App() {
   const [activeDeckId, setActiveDeckId] = useState('')
 
   useEffect(() => {
+    setCatalog([])
+    setCatalogSource(game === 'mtg' ? 'Loading cached Scryfall cards…' : 'Loading development catalog…')
     void window.riftboundStudio
-      .loadCatalog()
+      .loadCatalog(game)
       .then((snapshot) => {
         setCatalog(snapshot.cards)
-        setCatalogSource(`${snapshot.cards.length.toLocaleString()} cards · development fixture`)
+        setCatalogSource(game === 'mtg'
+          ? `${snapshot.cards.length.toLocaleString()} cached Scryfall cards · live lookup enabled`
+          : `${snapshot.cards.length.toLocaleString()} cards · development fixture`)
       })
       .catch((reason) => setError(formatError(reason)))
-    return window.riftboundStudio.onMpcProgress(setProgress)
-  }, [])
+  }, [game])
+
+  useEffect(() => window.riftboundStudio.onMpcProgress(setProgress), [])
 
   const manifest = document?.manifest
   const totalCards = useMemo(() => manifest ? projectCardCount(manifest) : 0, [manifest])
@@ -75,12 +99,14 @@ export default function App() {
     setBusy(true)
     clearMessages()
     try {
-      if (catalog.length === 0) throw new Error('The card catalog is still loading.')
+      if (game === 'riftbound' && catalog.length === 0) throw new Error('The card catalog is still loading.')
       let result: ImportResult
-      if (importMode === 'text') result = await window.riftboundStudio.importText(importValue)
+      if (importMode === 'text') result = await window.riftboundStudio.importText(game, importValue)
       else if (importMode === 'code') result = await window.riftboundStudio.importDeckCode(importValue)
       else result = await window.riftboundStudio.importPiltoverUrl(importValue)
-      const entries = await window.riftboundStudio.resolveImport(result, catalog)
+      const resolved = await window.riftboundStudio.resolveImport(game, result, catalog)
+      const entries = resolved.entries
+      mergeCatalog(resolved.cards)
       const count = entries.reduce((total, entry) => total + entry.quantity, 0)
       if (totalCards + count > MAX_MPC_CARDS) throw new Error(`Adding this deck would create ${totalCards + count} cards; one project is limited to ${MAX_MPC_CARDS}. Split it into another project.`)
       const now = new Date().toISOString()
@@ -95,18 +121,19 @@ export default function App() {
           manifest: { ...document.manifest, decks: [...document.manifest.decks, deck], updatedAt: now }
         })
       } else {
-        const defaultBack = await window.riftboundStudio.getDefaultBack()
+        const defaultBack = await window.riftboundStudio.getDefaultBack(game)
         setDocument({
           manifest: {
             schemaVersion: PROJECT_SCHEMA_VERSION,
+            game,
             projectId: crypto.randomUUID(),
-            title: result.title ?? 'Untitled Riftbound project',
+            title: result.title ?? `Untitled ${GAME_PROFILES[game].label} project`,
             createdAt: now,
             updatedAt: now,
             decks: [deck],
             globalBack: customSelection(defaultBack),
-            printSettings: { ...DEFAULT_PRINT_SETTINGS },
-            mpcSettings: { ...DEFAULT_MPC_SETTINGS }
+            printSettings: defaultPrintSettings(game),
+            mpcSettings: defaultMpcSettings(game)
           },
           customAssets: { [defaultBack.assetId]: defaultBack.bytes }
         })
@@ -127,6 +154,7 @@ export default function App() {
       const opened = await window.riftboundStudio.openProject()
       if (!opened) return
       setDocument(opened)
+      setGame(opened.manifest.game)
       setActiveDeckId(opened.manifest.decks[0]?.id ?? '')
       setStep('Resolve')
       setNotice(`Opened ${opened.manifest.title}`)
@@ -157,6 +185,21 @@ export default function App() {
     )
   }
 
+  function mergeCatalog(cards: CardRecord[]): void {
+    setCatalog((current) => [...new Map([...current, ...cards].map((card) => [card.id, card])).values()])
+  }
+
+  async function searchCatalog(query: string): Promise<CardRecord[]> {
+    const cards = await window.riftboundStudio.searchCatalog(game, query)
+    mergeCatalog(cards)
+    return cards
+  }
+
+  async function loadPrintings(cardId: string): Promise<void> {
+    const cards = await window.riftboundStudio.loadPrintings(game, cardId)
+    mergeCatalog(cards)
+  }
+
   function resolveEntry(deckId: string, entryId: string, cardId: string): void {
     const card = catalog.find((value) => value.id === cardId)
     if (!card) return
@@ -169,8 +212,8 @@ export default function App() {
           resolvedCardId: card.id,
           candidateCardIds: unique([card.id, ...entry.candidateCardIds]),
           allocations: entry.allocations.length > 0
-            ? entry.allocations.map((allocation) => ({ ...allocation, front: officialSelection(card) }))
-            : [{ id: crypto.randomUUID(), quantity: entry.quantity, front: officialSelection(card) }],
+            ? entry.allocations.map((allocation) => applyOfficialPrinting(allocation, card))
+            : [{ id: crypto.randomUUID(), quantity: entry.quantity, front: officialSelection(card), ...(card.backImageUrl ? { back: { kind: 'official' as const, cardId: card.id, imageUrl: card.backImageUrl, face: 'back' as const } } : {}) }],
           resolution: 'resolved'
         })
       })
@@ -293,10 +336,10 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <div className="brand-mark">R</div>
+        <div className="brand-mark">P</div>
         <div className="brand-copy">
-          <strong>Riftbound Proxy Studio</strong>
-          <span>Private desktop prototype</span>
+          <strong>Proxy Studio</strong>
+          <span>{GAME_PROFILES[manifest?.game ?? game].label} project</span>
         </div>
         <div className="topbar-actions">
           <span className="catalog-status"><i />{catalogSource}</span>
@@ -306,7 +349,9 @@ export default function App() {
       </header>
 
       <div className="prototype-banner">
-        Development fixtures only. Public distribution is blocked until Riot product registration and approved API access.
+        {game === 'mtg'
+          ? 'Magic mode uses Scryfall images for personal playtest projects. No images are bundled; public binary distribution requires separate rights review.'
+          : 'Riftbound mode uses development fixtures. Public distribution requires Riot product registration and approved API access.'}
       </div>
 
       <main className="workspace">
@@ -362,6 +407,8 @@ export default function App() {
               onValue={setImportValue}
               onImport={() => void importDeck()}
               adding={Boolean(document)}
+              game={manifest?.game ?? game}
+              onGame={(value) => { setGame(value); setImportMode('text'); setImportValue(value === 'riftbound' ? SAMPLE_DECK : MTG_SAMPLE_DECK) }}
             />
           )}
           {step === 'Resolve' && manifest && activeDeck && (
@@ -369,6 +416,8 @@ export default function App() {
               deck={activeDeck}
               catalog={catalog}
               onResolve={(entryId, cardId) => resolveEntry(activeDeck.id, entryId, cardId)}
+              game={manifest.game}
+              onSearch={searchCatalog}
               onContinue={() => setStep('Customize')}
             />
           )}
@@ -380,6 +429,7 @@ export default function App() {
               onUpdateEntry={(entryId, update) => updateEntry(activeDeck.id, entryId, update)}
               onChooseArtwork={chooseArtwork}
               onUpdateManifest={updateManifest}
+              onLoadPrintings={loadPrintings}
               onContinue={() => setStep('Review')}
             />
           )}
@@ -407,7 +457,9 @@ export default function App() {
       </main>
 
       <footer>
-        Riftbound Proxy Studio isn’t endorsed by Riot Games and doesn’t reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games and all associated properties are trademarks or registered trademarks of Riot Games, Inc.
+        {game === 'mtg'
+          ? 'Proxy Studio is unofficial and is not endorsed by Wizards of the Coast or Scryfall. Magic: The Gathering and its card images are property of Wizards of the Coast. For personal playtesting only; not for sale or sanctioned play.'
+          : 'Proxy Studio isn’t endorsed by Riot Games and doesn’t reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games and all associated properties are trademarks or registered trademarks of Riot Games, Inc.'}
       </footer>
     </div>
   )
@@ -445,6 +497,8 @@ function DeckBar(props: {
 }
 
 function ImportPanel(props: {
+  game: GameId
+  onGame: (game: GameId) => void
   mode: ImportMode
   value: string
   busy: boolean
@@ -456,21 +510,24 @@ function ImportPanel(props: {
   return (
     <div className="panel narrow">
       <div className="eyebrow">{props.adding ? 'Add another deck' : 'Step 1'}</div>
-      <h1>{props.adding ? 'Add a deck to this project' : 'Bring in a Riftbound deck'}</h1>
-      <p className="lede">Paste a list, use a Piltover Archive link, or decode a share code. {props.adding ? 'It will be appended to the combined PDF and MPC project.' : 'Nothing is uploaded to our servers.'}</p>
+      <h1>{props.adding ? 'Add a deck to this project' : `Bring in a ${GAME_PROFILES[props.game].label} deck`}</h1>
+      <p className="lede">{props.game === 'mtg' ? 'Paste an Arena, MTGO, Moxfield, Archidekt, Commander, or plain-text export.' : 'Paste a list, use a Piltover Archive link, or decode a share code.'} {props.adding ? 'It will be appended to the combined PDF and MPC project.' : props.game === 'mtg' ? 'Card metadata and selected artwork are requested from Scryfall.' : 'Nothing is uploaded to our servers.'}</p>
+      {!props.adding && <div className="game-picker" role="group" aria-label="Card game">
+        {(['riftbound', 'mtg'] as GameId[]).map((game) => <button type="button" key={game} className={props.game === game ? 'selected' : ''} onClick={() => props.onGame(game)}><strong>{GAME_PROFILES[game].label}</strong><span>{game === 'mtg' ? 'Scryfall · 2.5×3.5 in' : 'Development catalog · 63×88 mm'}</span></button>)}
+      </div>}
       <div className="segmented">
-        {(['text', 'piltover', 'code'] as ImportMode[]).map((mode) => (
+        {(props.game === 'mtg' ? ['text'] as ImportMode[] : ['text', 'piltover', 'code'] as ImportMode[]).map((mode) => (
           <button key={mode} className={props.mode === mode ? 'selected' : ''} onClick={() => { props.onMode(mode); props.onValue('') }}>
             {mode === 'text' ? 'Deck list' : mode === 'piltover' ? 'Piltover URL' : 'Deck code'}
           </button>
         ))}
       </div>
       {props.mode === 'text' ? (
-        <textarea className="deck-input" value={props.value} onChange={(event) => props.onValue(event.target.value)} placeholder="3 Ahri - Alluring" />
+        <textarea className="deck-input" value={props.value} onChange={(event) => props.onValue(event.target.value)} placeholder={props.game === 'mtg' ? '4 Lightning Bolt (M11) 149' : '3 Ahri - Alluring'} />
       ) : (
         <input className="single-input" value={props.value} onChange={(event) => props.onValue(event.target.value)} placeholder={props.mode === 'piltover' ? 'https://piltoverarchive.com/decks/view/…' : 'Paste Riftbound deck code'} />
       )}
-      <div className="tip"><strong>Accepted text</strong><code>3 Card Name</code><code>3x Card Name</code><code>Card Name x3</code><code>3 OGN-007 Card Name</code></div>
+      <div className="tip"><strong>Accepted text</strong><code>3 Card Name</code><code>3x Card Name</code><code>Card Name x3</code><code>{props.game === 'mtg' ? '3 Lightning Bolt (M11) 149' : '3 OGN-007 Card Name'}</code></div>
       <button className="button primary large" disabled={props.busy || !props.value.trim()} onClick={props.onImport}>
         {props.busy ? 'Importing…' : props.adding ? 'Add and resolve deck' : 'Import and resolve cards'}
       </button>
@@ -479,9 +536,11 @@ function ImportPanel(props: {
 }
 
 function ResolvePanel(props: {
+  game: GameId
   deck: ProjectDeck
   catalog: CardRecord[]
   onResolve: (entryId: string, cardId: string) => void
+  onSearch: (query: string) => Promise<CardRecord[]>
   onContinue: () => void
 }) {
   const attentionEntries = props.deck.entries.filter((entry) => entry.resolution !== 'resolved')
@@ -504,7 +563,7 @@ function ResolvePanel(props: {
               <span className="quantity-badge">{entry.quantity}</span>
               <div className="entry-name"><strong>{entry.rawName}</strong>{entry.resolution !== 'resolved' && <span className={`attention-badge ${entry.resolution}`}>{entry.resolution === 'ambiguous' ? 'Choose a printing' : 'No automatic match'}</span>}{legendAlias && <small>Legend title matched as “{legendAlias}”</small>}</div>
               <span className="muted capitalize">{entry.section}</span>
-              <CandidatePicker entry={entry} catalog={props.catalog} onSelect={(cardId) => props.onResolve(entry.id, cardId)} />
+              <CandidatePicker game={props.game} entry={entry} catalog={props.catalog} onSearch={props.onSearch} onSelect={(cardId) => props.onResolve(entry.id, cardId)} />
             </div>
           )
         })}
@@ -514,9 +573,11 @@ function ResolvePanel(props: {
   )
 }
 
-function CandidatePicker(props: { entry: DeckEntry; catalog: CardRecord[]; onSelect: (cardId: string) => void }) {
+function CandidatePicker(props: { game: GameId; entry: DeckEntry; catalog: CardRecord[]; onSearch: (query: string) => Promise<CardRecord[]>; onSelect: (cardId: string) => void }) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
+  const [remoteOptions, setRemoteOptions] = useState<CardRecord[]>([])
+  const [searching, setSearching] = useState(false)
   const current = props.catalog.find((card) => card.id === props.entry.resolvedCardId)
   const suggested = useMemo(() => unique(props.entry.candidateCardIds)
     .map((id) => props.catalog.find((card) => card.id === id))
@@ -524,10 +585,24 @@ function CandidatePicker(props: { entry: DeckEntry; catalog: CardRecord[]; onSel
   const options = useMemo(() => {
     const needle = normalizeSearch(query)
     if (!needle) return suggested
-    return props.catalog.filter((card) => normalizeSearch(`${card.code} ${card.publicCode} ${card.name} ${card.setName} ${card.rarity}`).includes(needle)).slice(0, 50)
-  }, [props.catalog, query, suggested])
+    const local = props.catalog.filter((card) => normalizeSearch(`${card.code} ${card.publicCode} ${card.name} ${card.setName} ${card.rarity}`).includes(needle))
+    return [...new Map([...local, ...remoteOptions].map((card) => [card.id, card])).values()].slice(0, 75)
+  }, [props.catalog, query, remoteOptions, suggested])
   const [focusedId, setFocusedId] = useState<string | undefined>()
   const focused = options.find((card) => card.id === focusedId) ?? options[0] ?? current
+
+  useEffect(() => {
+    if (!open || props.game !== 'mtg' || query.trim().length < 2) { setRemoteOptions([]); return }
+    let disposed = false
+    const timer = window.setTimeout(() => {
+      setSearching(true)
+      void props.onSearch(query)
+        .then((cards) => { if (!disposed) setRemoteOptions(cards) })
+        .catch(() => { if (!disposed) setRemoteOptions([]) })
+        .finally(() => { if (!disposed) setSearching(false) })
+    }, 350)
+    return () => { disposed = true; window.clearTimeout(timer) }
+  }, [open, props.game, query])
 
   return (
     <div className={`candidate-picker ${props.entry.resolution}`}>
@@ -540,6 +615,7 @@ function CandidatePicker(props: { entry: DeckEntry; catalog: CardRecord[]; onSel
             <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name, set, or card code…" aria-label="Search card catalog" />
             <div className="candidate-options" role="listbox" aria-label={`Printings for ${props.entry.rawName}`}>
               {!query && suggested.length > 0 && <div className="candidate-caption">Suggested matches</div>}
+              {searching && <div className="candidate-caption">Searching Scryfall…</div>}
               {options.map((card) => (
                 <button
                   type="button"
@@ -552,7 +628,7 @@ function CandidatePicker(props: { entry: DeckEntry; catalog: CardRecord[]; onSel
                 >
                   <strong>{card.name}</strong>
                   <span>{card.code} · {card.setName}</span>
-                  <small>#{card.collectorNumber} · {card.rarity}{card.isVariant ? ' · Alternate' : ' · Base'}</small>
+                  <small>#{card.collectorNumber} · {card.rarity}{card.language ? ` · ${card.language.toUpperCase()}` : ''}{card.imageQuality === 'fallback' ? ' · lower resolution' : ''}{card.isVariant ? ' · Alternate' : ' · Base'}</small>
                 </button>
               ))}
               {options.length === 0 && <div className="candidate-empty">{query ? 'No catalog matches.' : 'Type to search the full catalog.'}</div>}
@@ -574,8 +650,13 @@ function CustomizePanel(props: {
   onUpdateEntry: (id: string, update: (entry: DeckEntry) => DeckEntry) => void
   onChooseArtwork: (target: 'global-back' | 'front' | 'back', deckId?: string, entryId?: string, allocationId?: string) => Promise<void>
   onUpdateManifest: (update: (value: ProjectManifest) => ProjectManifest) => void
+  onLoadPrintings: (cardId: string) => Promise<void>
   onContinue: () => void
 }) {
+  const [artworkBrowser, setArtworkBrowser] = useState<{ entryId: string; allocationId: string; seedCardId: string } | null>(null)
+  const [artworkLoading, setArtworkLoading] = useState(false)
+  const [artworkError, setArtworkError] = useState<string | null>(null)
+
   function splitArtwork(entry: DeckEntry): void {
     const source = [...entry.allocations].sort((a, b) => b.quantity - a.quantity).find((allocation) => allocation.quantity > 1)
     if (!source) return
@@ -599,7 +680,23 @@ function CustomizePanel(props: {
     })
   }
 
+  function openArtworkBrowser(entry: DeckEntry, allocation: ArtworkAllocation): void {
+    const seedCardId = allocation.front.kind === 'official' ? allocation.front.cardId : entry.resolvedCardId
+    if (!seedCardId) return
+    setArtworkBrowser({ entryId: entry.id, allocationId: allocation.id, seedCardId })
+    setArtworkError(null)
+    setArtworkLoading(true)
+    void props.onLoadPrintings(seedCardId)
+      .catch((reason) => setArtworkError(formatError(reason)))
+      .finally(() => setArtworkLoading(false))
+  }
+
+  const browserEntry = artworkBrowser ? props.deck.entries.find((entry) => entry.id === artworkBrowser.entryId) : undefined
+  const browserAllocation = browserEntry?.allocations.find((allocation) => allocation.id === artworkBrowser?.allocationId)
+  const browserSeed = artworkBrowser ? props.catalog.find((card) => card.id === artworkBrowser.seedCardId) : undefined
+
   return (
+    <>
     <div className="panel">
       <div className="panel-heading"><div><div className="eyebrow">Step 3 · {props.deck.title}</div><h1>Choose artwork and backs</h1><p>Split a card into artwork groups to give individual copies different printings, custom fronts, or backs. Group quantities always total the imported quantity.</p></div></div>
       <div className="back-card">
@@ -610,7 +707,6 @@ function CustomizePanel(props: {
       <div className="art-entry-list">
         {props.deck.entries.map((entry) => {
           const card = props.catalog.find((value) => value.id === entry.resolvedCardId)
-          const variants = card ? props.catalog.filter((value) => value.baseCode === card.baseCode || value.name === card.name) : []
           return (
             <section className="art-entry" key={entry.id}>
               <div className="art-entry-heading">
@@ -624,10 +720,13 @@ function CustomizePanel(props: {
                     <div className="art-card-body">
                       <div className="art-title"><strong>Artwork {allocationIndex + 1}</strong><span>×{allocation.quantity}</span></div>
                       <label>Copies in this group<input className="quantity-input" type="number" min="1" max={entry.quantity - (entry.allocations.length - 1)} disabled={entry.allocations.length === 1} value={allocation.quantity} onChange={(event) => props.onUpdateEntry(entry.id, (value) => ({ ...value, allocations: rebalanceAllocations(value.allocations, allocation.id, Number(event.target.value)) }))} /></label>
-                      <label>Official printing<select value={allocation.front.kind === 'official' ? allocation.front.cardId : 'custom'} onChange={(event) => {
-                        const selected = props.catalog.find((value) => value.id === event.target.value)
-                        if (selected) props.onUpdateEntry(entry.id, (value) => ({ ...value, allocations: value.allocations.map((item) => item.id === allocation.id ? { ...item, front: officialSelection(selected) } : item) }))
-                      }}><option value="custom" disabled={allocation.front.kind !== 'custom'}>Custom upload</option>{variants.map((variant) => <option key={variant.id} value={variant.id}>{variant.code} · {variant.rarity}</option>)}</select></label>
+                      <ArtworkChoiceSummary
+                        selection={allocation.front}
+                        catalog={props.catalog}
+                        disabled={!card && allocation.front.kind !== 'official'}
+                        onBrowse={() => openArtworkBrowser(entry, allocation)}
+                      />
+                      {card?.layout && ['transform', 'modal_dfc'].includes(card.layout) && <div className="dfc-note">Double-faced card · its Scryfall reverse face is assigned as this copy’s back unless you override it.</div>}
                       <div className="mini-actions"><button onClick={() => void props.onChooseArtwork('front', props.deck.id, entry.id, allocation.id)}>Custom front</button><button onClick={() => void props.onChooseArtwork('back', props.deck.id, entry.id, allocation.id)}>{allocation.back ? 'Replace back' : 'Override back'}</button>{entry.allocations.length > 1 && <button className="danger" onClick={() => removeArtwork(entry, allocation.id)}>Merge group</button>}</div>
                     </div>
                   </article>
@@ -639,6 +738,147 @@ function CustomizePanel(props: {
       </div>
       <div className="panel-actions"><span>Images are processed only when exported.</span><button className="button primary" onClick={props.onContinue}>Review print setup</button></div>
     </div>
+    {artworkBrowser && browserEntry && browserAllocation && browserSeed && (
+      <ArtworkBrowserDialog
+        game={props.document.manifest.game}
+        entry={browserEntry}
+        allocation={browserAllocation}
+        seed={browserSeed}
+        catalog={props.catalog}
+        loading={artworkLoading}
+        error={artworkError}
+        onClose={() => setArtworkBrowser(null)}
+        onChoose={(selected) => {
+          props.onUpdateEntry(browserEntry.id, (value) => ({
+            ...value,
+            resolvedCardId: selected.id,
+            candidateCardIds: unique([selected.id, ...value.candidateCardIds]),
+            allocations: value.allocations.map((item) => item.id === browserAllocation.id ? applyOfficialPrinting(item, selected) : item)
+          }))
+          setArtworkBrowser(null)
+        }}
+      />
+    )}
+    </>
+  )
+}
+
+function ArtworkChoiceSummary(props: {
+  selection: ArtworkSelection
+  catalog: CardRecord[]
+  disabled: boolean
+  onBrowse: () => void
+}) {
+  const selectedCardId = props.selection.kind === 'official' ? props.selection.cardId : undefined
+  const card = selectedCardId ? props.catalog.find((candidate) => candidate.id === selectedCardId) : undefined
+  return (
+    <div className="artwork-choice-summary">
+      <span>Official printing</span>
+      <strong>{card ? `${card.setName} · #${card.collectorNumber}` : 'Custom artwork selected'}</strong>
+      {card && <small>{card.releasedAt ? `${formatReleaseDate(card.releasedAt)} · ` : ''}{card.rarity}{card.language ? ` · ${card.language.toUpperCase()}` : ''}</small>}
+      <button type="button" className="button secondary artwork-browser-button" disabled={props.disabled} onClick={props.onBrowse}>Browse artwork gallery</button>
+    </div>
+  )
+}
+
+function ArtworkBrowserDialog(props: {
+  game: GameId
+  entry: DeckEntry
+  allocation: ArtworkAllocation
+  seed: CardRecord
+  catalog: CardRecord[]
+  loading: boolean
+  error: string | null
+  onClose: () => void
+  onChoose: (card: CardRecord) => void
+}) {
+  const currentCardId = props.allocation.front.kind === 'official' ? props.allocation.front.cardId : undefined
+  const candidates = useMemo(() => artworkCandidates(props.catalog, props.seed), [props.catalog, props.seed])
+  const [query, setQuery] = useState('')
+  const [focusedId, setFocusedId] = useState(currentCardId ?? props.seed.id)
+  const filtered = useMemo(() => {
+    const needle = normalizeSearch(query)
+    if (!needle) return candidates
+    return candidates.filter((card) => normalizeSearch([
+      card.name,
+      card.code,
+      card.setName,
+      card.collectorNumber,
+      card.rarity,
+      card.language,
+      card.artist,
+      ...(card.treatments ?? [])
+    ].filter(Boolean).join(' ')).includes(needle))
+  }, [candidates, query])
+  const focused = filtered.find((card) => card.id === focusedId) ?? filtered[0]
+
+  useEffect(() => {
+    function closeOnEscape(event: KeyboardEvent): void {
+      if (event.key === 'Escape') props.onClose()
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [props.onClose])
+
+  useEffect(() => {
+    if (!filtered.some((card) => card.id === focusedId) && filtered[0]) setFocusedId(filtered[0].id)
+  }, [filtered, focusedId])
+
+  return (
+    <div className="artwork-browser-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) props.onClose() }}>
+      <section className="artwork-browser-dialog" role="dialog" aria-modal="true" aria-labelledby="artwork-browser-title">
+        <header className="artwork-browser-header">
+          <div><div className="eyebrow">Artwork gallery · {props.allocation.quantity} {props.allocation.quantity === 1 ? 'copy' : 'copies'}</div><h2 id="artwork-browser-title">Choose your favorite {props.seed.name} artwork</h2><p>{props.game === 'mtg' ? 'Every available Scryfall printing is shown visually. ' : ''}Selecting one changes only this artwork group.</p></div>
+          <button type="button" className="artwork-browser-close" aria-label="Close artwork gallery" onClick={props.onClose}>×</button>
+        </header>
+        <div className="artwork-browser-toolbar">
+          <label><span>Search printings</span><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Set, year, artist, treatment, collector number…" /></label>
+          <div><strong>{filtered.length}</strong><span>{filtered.length === 1 ? 'artwork' : 'artworks'}</span></div>
+        </div>
+        {props.loading && <div className="artwork-browser-status">Loading every official printing{props.game === 'mtg' ? ' from Scryfall' : ''}…</div>}
+        {props.error && <div className="message error artwork-browser-error">Could not load all printings: {props.error}</div>}
+        <div className="artwork-browser-body">
+          <div className="artwork-gallery" aria-label="Available artwork printings">
+            {filtered.map((card) => {
+              const selected = card.id === currentCardId
+              const active = card.id === focused?.id
+              return (
+                <button
+                  type="button"
+                  className={`artwork-tile ${selected ? 'selected' : ''} ${active ? 'focused' : ''}`}
+                  key={card.id}
+                  aria-pressed={active}
+                  onClick={() => setFocusedId(card.id)}
+                  onFocus={() => setFocusedId(card.id)}
+                  onMouseEnter={() => setFocusedId(card.id)}
+                >
+                  <span className="artwork-tile-image"><img loading="lazy" src={card.imageUrl} alt={`${card.name}, ${card.setName} artwork`} />{selected && <b>Current</b>}{card.imageQuality === 'fallback' && <em>Lower resolution</em>}</span>
+                  <span className="artwork-tile-copy"><strong>{card.setName}</strong><small>{formatPrintingCaption(card)}</small></span>
+                </button>
+              )
+            })}
+            {!props.loading && filtered.length === 0 && <div className="artwork-gallery-empty"><strong>No artwork matches that search.</strong><span>Try a set name, artist, year, or collector number.</span></div>}
+          </div>
+          <aside className="artwork-focus-preview">
+            {focused ? (
+              <>
+                <div className="artwork-focus-image"><img src={focused.imageUrl} alt={`Large preview of ${focused.name} from ${focused.setName}`} /></div>
+                <div className="artwork-focus-details">
+                  <div><span className="eyebrow">Focused artwork</span><h3>{focused.setName}</h3><p>{focused.code} · #{focused.collectorNumber} · {focused.rarity}{focused.language ? ` · ${focused.language.toUpperCase()}` : ''}</p></div>
+                  <dl>
+                    {focused.releasedAt && <><dt>Released</dt><dd>{formatReleaseDate(focused.releasedAt)}</dd></>}
+                    {focused.artist && <><dt>Artist</dt><dd>{focused.artist}</dd></>}
+                    {!!focused.treatments?.length && <><dt>Treatments</dt><dd>{focused.treatments.map(formatTreatment).join(' · ')}</dd></>}
+                  </dl>
+                  {focused.imageQuality === 'fallback' && <div className="artwork-quality-warning">This printing uses a lower-resolution source and may look softer in print.</div>}
+                  <button type="button" className="button primary large" onClick={() => props.onChoose(focused)}>{focused.id === currentCardId ? 'Keep this artwork' : 'Use this artwork'}</button>
+                </div>
+              </>
+            ) : <div className="artwork-gallery-empty">Choose an artwork to see it larger.</div>}
+          </aside>
+        </div>
+      </section>
+    </div>
   )
 }
 
@@ -648,6 +888,7 @@ function ReviewPanel(props: {
   onContinue: () => void
 }) {
   const manifest = props.document.manifest
+  const gameProfile = GAME_PROFILES[manifest.game]
   const total = projectCardCount(manifest)
   const proofOptions = manifest.decks.flatMap((deck) => deck.entries.flatMap((entry) =>
     entry.allocations.map((allocation) => ({ deck, entry, allocation }))
@@ -707,7 +948,7 @@ function ReviewPanel(props: {
 
   return (
     <div className="panel">
-      <div className="panel-heading"><div><div className="eyebrow">Step 4</div><h1>Review the physical output</h1><p>Card trim is fixed at 63×88 mm. Bleed surrounds—but never changes—the trim box.</p></div><div className="status-pill good">{total} cards</div></div>
+      <div className="panel-heading"><div><div className="eyebrow">Step 4</div><h1>Review the physical output</h1><p>Card trim is fixed at {gameProfile.cardWidthMm}×{gameProfile.cardHeightMm} mm. Bleed surrounds—but never changes—the trim box.</p></div><div className="status-pill good">{total} cards</div></div>
       <div className="review-layout">
         <div className="preview-column">
           <div className={`sheet-preview accurate ${previewBusy ? 'loading' : ''}`}>
@@ -723,24 +964,42 @@ function ReviewPanel(props: {
           {preview?.warnings.map((warning) => <div className="layout-warning" key={warning}>{warning}</div>)}
         </div>
         <div className="settings-card">
+          <h3>MPC card stock</h3>
+          <fieldset className="stock-picker">
+            <legend>Choose physical card thickness</legend>
+            {MPC_STOCK_OPTIONS.map((option) => (
+              <label className={manifest.mpcSettings.stock === option.id ? 'selected' : ''} key={option.id}>
+                <input
+                  type="radio"
+                  name="mpc-stock"
+                  value={option.id}
+                  checked={manifest.mpcSettings.stock === option.id}
+                  onChange={() => props.onUpdateManifest((value) => ({ ...value, mpcSettings: { ...value.mpcSettings, stock: option.id } }))}
+                />
+                <span><strong>{option.id} · {option.title}</strong><small>{option.detail}</small></span>
+              </label>
+            ))}
+          </fieldset>
+          <p className="stock-note">Stock changes the physical card, not artwork size. The MPC bleed and cut geometry stay exactly the same.</p>
+          <div className="settings-divider" />
           <h3>Print PDF</h3>
           <label>Page size<select value={manifest.printSettings.pageSize} onChange={(event) => { setPageIndex(0); props.onUpdateManifest((value) => ({ ...value, printSettings: { ...value.printSettings, pageSize: event.target.value as 'letter' | 'a4' } })) }}><option value="letter">US Letter</option><option value="a4">A4</option></select></label>
           <label>Print mode<select value={manifest.printSettings.mode} onChange={(event) => { setPageIndex(0); props.onUpdateManifest((value) => ({ ...value, printSettings: { ...value.printSettings, mode: event.target.value as 'fronts' | 'duplex' } })) }}><option value="fronts">Fronts only</option><option value="duplex">Duplex fronts + backs</option></select></label>
           <label>Bleed <span className="bleed-value"><strong>{manifest.printSettings.bleedMm.toFixed(1)} mm</strong><input aria-label="Bleed in millimeters" type="number" min="0" max="2" step="0.1" value={manifest.printSettings.bleedMm} onChange={(event) => updateBleed(Number(event.target.value))} /></span><input type="range" min="0" max="2" step="0.1" value={manifest.printSettings.bleedMm} onChange={(event) => updateBleed(Number(event.target.value))} /></label>
           <div className="bleed-presets">{[0, 1, 1.5, 2].map((value) => <button type="button" className={manifest.printSettings.bleedMm === value ? 'active' : ''} key={value} onClick={() => updateBleed(value)}>{value.toFixed(1)}</button>)}</div>
           <label className="checkbox"><input type="checkbox" checked={manifest.printSettings.cropMarks} onChange={(event) => props.onUpdateManifest((value) => ({ ...value, printSettings: { ...value.printSettings, cropMarks: event.target.checked } }))} />Vector crop marks</label>
-          <div className="spec-list"><div><span>Card trim</span><b>63 × 88 mm</b></div><div><span>Raster density</span><b>300 DPI</b></div><div><span>MPC stock</span><b>A35 non-foil</b></div></div>
+          <div className="spec-list"><div><span>Card trim</span><b>{gameProfile.cardWidthMm} × {gameProfile.cardHeightMm} mm</b></div><div><span>MPC upload</span><b>{gameProfile.mpcCanvasWidthPx} × {gameProfile.mpcCanvasHeightPx} px</b></div><div><span>MPC stock</span><b>{manifest.mpcSettings.stock} · non-foil</b></div></div>
         </div>
       </div>
       <div className="mpc-proof-section">
-        <div className="mpc-proof-copy"><div className="eyebrow">MPC placement proof</div><h2>The card now fills the safe area from top to bottom.</h2><p>The full source touches the dashed safe limit vertically. Only a tightly bounded strip of border artwork extends past it horizontally—while remaining inside trim—so the card is larger without sacrificing the side symbols or bottom credits. The softened underlay still fills the surrounding bleed.</p>
+        <div className="mpc-proof-copy"><div className="eyebrow">MPC placement proof</div><h2>The complete card face stays protected inside trim.</h2><p>The full source reaches the dashed safe limit vertically. Only a bounded strip of decorative border may extend past it horizontally, while the softened opaque underlay fills the cut bleed. No source pixels are cropped to manufacture bleed.</p>
           <label>Proof artwork group<select value={proofAllocationId} onChange={(event) => setProofAllocationId(event.target.value)}>{proofOptions.map(({ deck, entry, allocation }, index) => <option value={allocation.id} key={allocation.id}>{deck.title} · {entry.rawName} · Artwork {index + 1} ×{allocation.quantity}</option>)}</select></label>
           {proof && <div className={`proof-status ${proof.proof.placementVerified ? 'good' : 'bad'}`}><strong>{proof.proof.placementVerified ? 'Maximum safe-fit derivative verified' : 'Derivative failed verification'}</strong><span>{proof.proof.width}×{proof.proof.height} px · source {proof.proof.sourceRect.width}×{proof.proof.sourceRect.height} px · {sourceHorizontalOverscan(proof.proof)} px side extension · {proof.proof.transparentPixels} transparent pixels</span></div>}
         </div>
-        <div className="mpc-proof-frame">
+        <div className="mpc-proof-frame" style={{ aspectRatio: `${gameProfile.mpcCanvasWidthPx} / ${gameProfile.mpcCanvasHeightPx}` }}>
           {proof?.url && <img src={proof.url} alt={`${proof.label} MPC bleed proof`} />}
-          <div className="trim-guide"><span>Cut / trim</span></div>
-          <div className="safe-guide"><span>Safe area</span></div>
+          {proof && <><div className="trim-guide" style={proofGuideStyle(proof.proof.trimRect, proof.proof)}><span>Cut / trim</span></div>
+          <div className="safe-guide" style={proofGuideStyle(proof.proof.safeRect, proof.proof)}><span>Safe area</span></div></>}
         </div>
       </div>
       <div className="panel-actions"><span>Duplex backs are mirrored by column for physical alignment.</span><button className="button primary" onClick={props.onContinue}>Choose an output</button></div>
@@ -763,10 +1022,10 @@ function ExportPanel(props: {
   return (
     <div className="panel narrow export-panel">
       <div className="eyebrow">Step 5</div><h1>Make the deck physical</h1><p className="lede">Save a portable project, create cut-ready sheets, or let the app place every image into a new MPC project.</p>
-      <button className="output-card" onClick={props.onSave}><span className="output-icon">◆</span><div><strong>Save portable project</strong><small>Manifest, settings, and custom artwork in one .rbproxy file</small></div><b>Save</b></button>
+      <button className="output-card" onClick={props.onSave}><span className="output-icon">◆</span><div><strong>Save portable project</strong><small>Manifest, settings, and custom artwork in one .proxyproject file</small></div><b>Save</b></button>
       {props.unresolved > 0 && <div className="message warning">Resolve {props.unresolved} remaining {props.unresolved === 1 ? 'entry' : 'entries'} across the project before creating combined output.</div>}
       <button className="output-card" disabled={props.busy || props.unresolved > 0} onClick={props.onPdf}><span className="output-icon">▦</span><div><strong>Export print-ready PDF</strong><small>{props.document.manifest.printSettings.pageSize.toUpperCase()} · {props.document.manifest.printSettings.mode} · crop marks</small></div><b>Export</b></button>
-      <button className="output-card featured" disabled={props.busy || props.unresolved > 0} onClick={props.onMpc}><span className="output-icon">↗</span><div><strong>Send to MakePlayingCards</strong><small>{props.totalCards} cards from {props.document.manifest.decks.length} {props.document.manifest.decks.length === 1 ? 'deck' : 'decks'} · A35 · stops at review</small></div><b>Start</b></button>
+      <button className="output-card featured" disabled={props.busy || props.unresolved > 0} onClick={props.onMpc}><span className="output-icon">↗</span><div><strong>Send to MakePlayingCards</strong><small>{props.totalCards} cards from {props.document.manifest.decks.length} {props.document.manifest.decks.length === 1 ? 'deck' : 'decks'} · {props.document.manifest.mpcSettings.stock} · stops at review</small></div><b>Start</b></button>
       {props.progress && <div className={`progress-card ${props.progress.stage}`}><div><strong>{props.progress.stage.replaceAll('-', ' ')}</strong><span>{props.progress.message}</span></div><div className="progress-track"><i style={{ width: `${pct}%` }} /></div>{props.busy && <button onClick={props.onCancel}>Cancel automation</button>}</div>}
       <div className="checkout-note"><strong>Checkout is always manual.</strong> The app never enters payment details or confirms a purchase.</div>
     </div>
@@ -788,7 +1047,17 @@ function ArtworkPreview({ selection, assets }: { selection: ArtworkSelection | u
 }
 
 function officialSelection(card: CardRecord): ArtworkSelection {
-  return { kind: 'official', cardId: card.id, imageUrl: card.imageUrl }
+  return { kind: 'official', cardId: card.id, imageUrl: card.imageUrl, face: 'front' }
+}
+
+function applyOfficialPrinting(allocation: ArtworkAllocation, card: CardRecord): ArtworkAllocation {
+  const nextBack = card.backImageUrl
+    ? { kind: 'official' as const, cardId: card.id, imageUrl: card.backImageUrl, face: 'back' as const }
+    : allocation.back?.kind === 'official' && allocation.back.face === 'back'
+      ? undefined
+      : allocation.back
+  const { back: _back, ...withoutBack } = allocation
+  return { ...withoutBack, front: officialSelection(card), ...(nextBack ? { back: nextBack } : {}) }
 }
 
 function customSelection(value: { assetId: string; archivePath: string; displayName: string }): ArtworkSelection {
@@ -799,6 +1068,38 @@ function artworkName(selection: ArtworkSelection | undefined, catalog: CardRecor
   if (!selection) return 'No artwork selected'
   if (selection.kind === 'custom') return selection.displayName
   return catalog.find((card) => card.id === selection.cardId)?.name ?? 'Official artwork'
+}
+
+function artworkCandidates(catalog: CardRecord[], seed: CardRecord): CardRecord[] {
+  const seedName = normalizeSearch(seed.name)
+  const matches = catalog.filter((card) => card.game === seed.game && (
+    (seed.identityId && card.identityId === seed.identityId) ||
+    (seed.baseCode && card.baseCode === seed.baseCode) ||
+    normalizeSearch(card.name) === seedName
+  ))
+  return [...new Map(matches.map((card) => [card.id, card])).values()].sort((left, right) => {
+    const dateDifference = (right.releasedAt ?? '').localeCompare(left.releasedAt ?? '')
+    if (dateDifference !== 0) return dateDifference
+    return left.setName.localeCompare(right.setName) || left.collectorNumber.localeCompare(right.collectorNumber, undefined, { numeric: true })
+  })
+}
+
+function formatPrintingCaption(card: CardRecord): string {
+  return [
+    card.releasedAt ? formatReleaseDate(card.releasedAt) : undefined,
+    `#${card.collectorNumber}`,
+    card.language?.toUpperCase(),
+    card.treatments?.[0] ? formatTreatment(card.treatments[0]) : undefined
+  ].filter(Boolean).join(' · ')
+}
+
+function formatReleaseDate(value: string): string {
+  const parsed = new Date(`${value}T00:00:00`)
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+}
+
+function formatTreatment(value: string): string {
+  return value.replaceAll('_', ' ').replaceAll('-', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
 function rebalanceAllocations(allocations: ArtworkAllocation[], allocationId: string, requested: number): ArtworkAllocation[] {
@@ -838,6 +1139,14 @@ function sourceHorizontalOverscan(proof: MpcPlacementProof): number {
     proof.safeRect.x - proof.sourceRect.x,
     proof.sourceRect.x + proof.sourceRect.width - (proof.safeRect.x + proof.safeRect.width)
   )
+}
+function proofGuideStyle(rect: MpcPlacementProof['trimRect'], proof: Pick<MpcPlacementProof, 'width' | 'height'>) {
+  return {
+    left: `${(rect.x / proof.width) * 100}%`,
+    top: `${(rect.y / proof.height) * 100}%`,
+    width: `${(rect.width / proof.width) * 100}%`,
+    height: `${(rect.height / proof.height) * 100}%`
+  }
 }
 function normalizeSearch(value: string): string { return value.normalize('NFKD').replace(/[’‘`]/g, "'").toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() }
 function formatError(value: unknown): string { return value instanceof Error ? value.message : String(value) }

@@ -1,20 +1,44 @@
-# Riftbound Proxy Studio
+# Proxy Studio
 
-A private Windows desktop prototype for importing Riftbound deck lists, choosing artwork, saving portable projects, exporting print-ready PDFs, and preparing a new MakePlayingCards project in a visible Chrome session.
+A Windows desktop application for importing Riftbound or Magic: The Gathering deck lists, choosing artwork, saving portable projects, exporting print-ready PDFs, and preparing a new MakePlayingCards project in a visible Chrome session.
 
 ## Current prototype workflow
 
-1. Import one or more text deck lists, Piltover Archive URLs, or Piltover deck codes into a project.
+1. Choose Riftbound or Magic, then import one or more compatible deck lists into a project. Riftbound also supports Piltover Archive URLs and deck codes; Magic supports common Arena, MTGO, Moxfield, Archidekt, and Commander text formats.
 2. Navigate each named deck and resolve ambiguous or missing cards against the development catalog.
-3. Split repeated cards into artwork groups, then choose official variants, custom fronts, a shared proxy-marked back, or per-group back overrides.
+3. Split repeated cards into artwork groups, then compare official printings in a large visual gallery, choose custom fronts, assign a shared proxy-marked back, or add per-group back overrides.
 4. Configure Letter/A4, fronts-only/duplex, 0–2 mm bleed, and crop marks.
-5. Save `.rbproxy`, export PDF, or start MPC automation.
+5. Save `.proxyproject` (or open an existing `.rbproxy`), export PDF, or start MPC automation.
 
-MPC automation selects the live quantity bracket and required A35 stock from the page, uploads unique images, assigns slots, and stops at review. It never enters payment information or confirms an order.
+MPC automation selects the live quantity bracket and the project's chosen S30, S33, or A35 stock from the page, uploads unique images, assigns slots, and stops at review. It never enters payment information or confirms an order.
 
 ## Download
 
-Windows installer, portable executable, and portable ZIP builds are published on the private repository's [GitHub Releases page](https://github.com/younim2837/riftbound-proxy-studio/releases).
+The latest published Windows binaries are on the repository's [GitHub Releases page](https://github.com/younim2837/riftbound-proxy-studio/releases). Version 0.3.2 source includes Magic support, the artwork gallery, and stock selection. The 0.3.2 Windows binaries are not published yet; build this version locally with `npm ci` and `npm run pack` until the release gates in [ROADMAP.md](ROADMAP.md) are complete.
+
+## 0.3.2 selectable MPC card stock
+
+- Review now offers S30 professional standard blue-core, S33 superior smooth black-core, and A35 thick standard card stock.
+- A35 remains the default for existing and new projects, while the selected option is saved in `.proxyproject` files.
+- The Export summary shows the chosen stock, and MPC automation selects that exact option from MPC's live card-stock menu before opening the editor.
+- Card stock affects only the physical material; image dimensions, safe placement, and bleed geometry remain unchanged.
+
+## 0.3.1 visual artwork browser
+
+- Customize now opens official printings in a large, scrollable image gallery instead of a native text dropdown.
+- Hover, focus, or click any thumbnail to inspect a much larger preview before committing the selection.
+- Search by set, release date, artist, treatment, language, or collector number; the active printing is clearly marked.
+- Selection remains scoped to the current artwork group, so split quantities continue to support mixes such as five base copies and one alternate-art copy.
+- Scryfall release, artist, finish, promo, and frame-treatment metadata is retained in the local catalog cache to make visually similar Magic printings easier to distinguish.
+
+## 0.3.0 Magic support and multi-game profiles
+
+- New projects choose either Riftbound or Magic: The Gathering. A project remains single-game because the two MPC products have different physical dimensions.
+- Magic imports resolve card identity and printings through Scryfall. The provider batches deck resolution, throttles live requests, caches metadata and images locally, supports catalog search, and lazily loads alternate printings.
+- Scryfall PNGs are preferred. Transform and modal double-faced cards automatically assign the reverse Scryfall face as that artwork group's physical back, which can still be overridden.
+- Magic uses MPC Traditional Poker geometry: 63.5×88.9 mm trim, 822×1122 px upload canvas, 750×1050 px cut rectangle at `(36,36)`, 36 px sacrificial bleed, and a further 36 px internal safe guide.
+- The complete source is proportionally protected inside trim. An opaque reflected/softened edge underlay fills the remaining trim and bleed without cropping the source or producing transparent white corners.
+- Project schema 3 stores the selected game. Schema 1 and 2 projects migrate automatically to Riftbound. New `.proxyproject` files and existing `.rbproxy` files are both supported.
 
 ## 0.2.0 combined projects and per-copy artwork
 
@@ -53,14 +77,16 @@ npm run build
 npm run pack
 ```
 
-The development card provider is intentionally replaceable. Its default metadata fixture references Riot-hosted images and is for private prototype work only. Do not distribute the application until Riot product registration and approved Riftbound API access are in place.
+The Riftbound development provider remains intentionally replaceable. Magic uses live Scryfall metadata and downloads only artwork selected by the user. Run `npm run test:live:scryfall` to exercise a real high-resolution Scryfall PNG through the 822×1122 derivative pipeline.
 
 ## Project files
 
-`.rbproxy` files are ZIP containers with a versioned `manifest.json` and user-provided artwork under `assets/`. Official artwork is referenced by catalog identity and downloaded into the application cache. Credentials, diagnostic logs, and processed images are never added to project files. Version 1 files remain readable and are upgraded in memory when opened.
+`.proxyproject` and legacy `.rbproxy` files are ZIP containers with a versioned `manifest.json` and user-provided artwork under `assets/`. Official artwork is referenced by catalog identity and downloaded into the application cache. Credentials, diagnostic logs, Scryfall/Riot images, and processed derivatives are never bundled. Schema 1 and 2 files remain readable and are upgraded in memory when opened.
 
 ## Legal notice
 
-Riftbound Proxy Studio isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games and all associated properties are trademarks or registered trademarks of Riot Games, Inc.
+Proxy Studio isn't endorsed by Riot Games, Wizards of the Coast, or Scryfall. Riot Games and all associated properties are trademarks or registered trademarks of Riot Games, Inc. Magic: The Gathering and its card images are property of Wizards of the Coast.
+
+Magic mode is intended for personal playtesting, not sale or sanctioned play. No Wizards or Scryfall images are stored in this repository or bundled in releases. Public binary distribution of the Magic image-to-MPC workflow remains subject to a separate rights review; a disclaimer alone does not grant permission.
 
 This repository contains a clean-room implementation. It does not copy source code or assets from MPC Autofill or TCG Proxy Builder.

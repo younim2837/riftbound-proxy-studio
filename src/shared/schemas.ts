@@ -1,10 +1,18 @@
 import { z } from 'zod'
-import { MAX_MPC_CARDS, PROJECT_SCHEMA_VERSION, type ProjectManifest } from './contracts.js'
+import {
+  GAME_PROFILES,
+  MAX_MPC_CARDS,
+  MPC_STOCK_CODES,
+  PROJECT_SCHEMA_VERSION,
+  type GameId,
+  type ProjectManifest
+} from './contracts.js'
 
 const officialArtworkSchema = z.object({
   kind: z.literal('official'),
   cardId: z.string().min(1),
-  imageUrl: z.string().url().refine((url) => url.startsWith('https://'), 'Official art must use HTTPS')
+  imageUrl: z.string().url().refine((url) => url.startsWith('https://'), 'Official art must use HTTPS'),
+  face: z.enum(['front', 'back']).optional()
 })
 
 const customArtworkSchema = z.object({
@@ -26,11 +34,24 @@ export const artworkAllocationSchema = z.object({
   back: artworkSelectionSchema.optional()
 })
 
+const deckSectionSchema = z.enum([
+  'main',
+  'sideboard',
+  'commander',
+  'companion',
+  'maybeboard',
+  'tokens',
+  'runes',
+  'legend',
+  'battlefields',
+  'other'
+])
+
 export const deckEntrySchema = z.object({
   id: z.string().min(1),
   rawName: z.string().min(1),
   quantity: z.number().int().positive().max(MAX_MPC_CARDS),
-  section: z.enum(['main', 'sideboard', 'runes', 'legend', 'battlefields', 'other']),
+  section: deckSectionSchema,
   resolvedCardId: z.string().min(1).optional(),
   candidateCardIds: z.array(z.string()),
   allocations: z.array(artworkAllocationSchema),
@@ -66,19 +87,20 @@ const printSettingsSchema = z.object({
   bleedMm: z.number().min(0).max(2),
   cropMarks: z.boolean(),
   dpi: z.literal(300),
-  cardWidthMm: z.literal(63),
-  cardHeightMm: z.literal(88)
+  cardWidthMm: z.number().positive(),
+  cardHeightMm: z.number().positive()
 })
 
 const mpcSettingsSchema = z.object({
-  product: z.literal('custom-game-cards-63x88'),
-  stock: z.literal('A35'),
+  product: z.enum(['custom-game-cards-63x88', 'custom-game-cards-traditional-poker']),
+  stock: z.enum(MPC_STOCK_CODES),
   finish: z.literal('MPC game card finish'),
   foil: z.literal(false)
 })
 
 export const projectManifestSchema = z.object({
   schemaVersion: z.literal(PROJECT_SCHEMA_VERSION),
+  game: z.enum(['riftbound', 'mtg']),
   projectId: z.string().uuid(),
   title: z.string().min(1).max(120),
   createdAt: z.string().datetime(),
@@ -88,6 +110,21 @@ export const projectManifestSchema = z.object({
   printSettings: printSettingsSchema,
   mpcSettings: mpcSettingsSchema
 }).superRefine((manifest, context) => {
+  const profile = GAME_PROFILES[manifest.game]
+  if (manifest.printSettings.cardWidthMm !== profile.cardWidthMm || manifest.printSettings.cardHeightMm !== profile.cardHeightMm) {
+    context.addIssue({
+      code: 'custom',
+      path: ['printSettings'],
+      message: `${profile.label} projects must use ${profile.cardWidthMm}×${profile.cardHeightMm} mm cards.`
+    })
+  }
+  if (manifest.mpcSettings.product !== profile.mpcProduct) {
+    context.addIssue({
+      code: 'custom',
+      path: ['mpcSettings', 'product'],
+      message: `${profile.label} projects must use their matching MPC product.`
+    })
+  }
   const count = manifest.decks.reduce(
     (projectTotal, deck) => projectTotal + deck.entries.reduce(
       (deckTotal, entry) => deckTotal + entry.quantity,
@@ -108,7 +145,7 @@ const legacyDeckEntrySchema = z.object({
   id: z.string().min(1),
   rawName: z.string().min(1),
   quantity: z.number().int().positive().max(MAX_MPC_CARDS),
-  section: z.enum(['main', 'sideboard', 'runes', 'legend', 'battlefields', 'other']),
+  section: deckSectionSchema,
   resolvedCardId: z.string().min(1).optional(),
   candidateCardIds: z.array(z.string()),
   front: artworkSelectionSchema.optional(),
@@ -128,11 +165,41 @@ const legacyManifestSchema = z.object({
   mpcSettings: mpcSettingsSchema
 })
 
+const versionTwoManifestSchema = z.object({
+  schemaVersion: z.literal(2),
+  projectId: z.string().uuid(),
+  title: z.string().min(1).max(120),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  decks: z.array(projectDeckSchema).min(1),
+  globalBack: artworkSelectionSchema.optional(),
+  printSettings: printSettingsSchema,
+  mpcSettings: mpcSettingsSchema
+})
+
+function migrateRiftboundManifest(manifest: Omit<ProjectManifest, 'schemaVersion' | 'game'>): ProjectManifest {
+  return projectManifestSchema.parse({
+    ...manifest,
+    schemaVersion: PROJECT_SCHEMA_VERSION,
+    game: 'riftbound' satisfies GameId,
+    printSettings: {
+      ...manifest.printSettings,
+      cardWidthMm: GAME_PROFILES.riftbound.cardWidthMm,
+      cardHeightMm: GAME_PROFILES.riftbound.cardHeightMm
+    },
+    mpcSettings: { ...manifest.mpcSettings, product: GAME_PROFILES.riftbound.mpcProduct }
+  }) as unknown as ProjectManifest
+}
+
 export function migrateProjectManifest(input: unknown): ProjectManifest {
+  if (typeof input === 'object' && input !== null && 'schemaVersion' in input && input.schemaVersion === 2) {
+    const legacy = versionTwoManifestSchema.parse(input)
+    const { schemaVersion: _schemaVersion, ...manifest } = legacy
+    return migrateRiftboundManifest(manifest as Omit<ProjectManifest, 'schemaVersion' | 'game'>)
+  }
   if (typeof input === 'object' && input !== null && 'schemaVersion' in input && input.schemaVersion === 1) {
     const legacy = legacyManifestSchema.parse(input)
-    return projectManifestSchema.parse({
-      schemaVersion: PROJECT_SCHEMA_VERSION,
+    return migrateRiftboundManifest({
       projectId: legacy.projectId,
       title: legacy.title,
       createdAt: legacy.createdAt,
@@ -150,7 +217,7 @@ export function migrateProjectManifest(input: unknown): ProjectManifest {
       globalBack: legacy.globalBack,
       printSettings: legacy.printSettings,
       mpcSettings: legacy.mpcSettings
-    }) as unknown as ProjectManifest
+    } as Omit<ProjectManifest, 'schemaVersion' | 'game'>)
   }
   return projectManifestSchema.parse(input) as unknown as ProjectManifest
 }

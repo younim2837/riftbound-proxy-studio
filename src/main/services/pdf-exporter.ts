@@ -36,8 +36,8 @@ export class PrintPdfExporter implements PdfExporter {
     validateSlots(slots, manifest)
     const layout = createPrintLayout(slots.length, manifest.printSettings)
     const pdf = await PDFDocument.create()
-    pdf.setTitle(`${manifest.title} - Riftbound proxy print sheets`)
-    pdf.setProducer('Riftbound Proxy Studio')
+    pdf.setTitle(`${manifest.title} - proxy print sheets`)
+    pdf.setProducer('Proxy Studio')
     const images = new Map<string, PDFImage>()
 
     for (const layoutPage of layout.pages) {
@@ -47,7 +47,7 @@ export class PrintPdfExporter implements PdfExporter {
         if (!slot) continue
         const selection = selectionFor(slot, layoutPage.side)
         if (!selection) continue
-        const derivative = await this.derivativeFor(selection, request.customAssets, manifest.printSettings.bleedMm)
+        const derivative = await this.derivativeFor(manifest.game, selection, request.customAssets, manifest.printSettings.bleedMm)
         let image = images.get(derivative.filePath)
         if (!image) {
           image = await pdf.embedPng(await readFile(derivative.filePath))
@@ -93,7 +93,7 @@ export class PrintPdfExporter implements PdfExporter {
       if (!slot) continue
       const selection = selectionFor(slot, layoutPage.side)
       if (!selection) continue
-      const derivative = await this.derivativeFor(selection, request.customAssets, manifest.printSettings.bleedMm)
+      const derivative = await this.derivativeFor(manifest.game, selection, request.customAssets, manifest.printSettings.bleedMm)
       const rect = layoutSlot.bleedRect
       const input = await sharp(derivative.filePath)
         .resize(px(rect.width), px(rect.height), { fit: 'fill' })
@@ -122,12 +122,13 @@ export class PrintPdfExporter implements PdfExporter {
   }
 
   private async derivativeFor(
+    game: ProjectManifest['game'],
     selection: ArtworkSelection,
     customAssets: Record<string, Uint8Array>,
     bleedMm: number
   ) {
     const { sourceId, bytes } = await this.resolver.load(selection, customAssets)
-    return this.pipeline.createPdfDerivative(sourceId, bytes, bleedMm)
+    return this.pipeline.createPdfDerivative(game, sourceId, bytes, bleedMm)
   }
 }
 

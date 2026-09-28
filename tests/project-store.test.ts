@@ -32,6 +32,18 @@ describe('portable project files', () => {
     expect(() => projectManifestSchema.parse(manifest)).toThrow(/612/)
   })
 
+  it('stores every supported MPC card stock while retaining A35 as the default', () => {
+    expect(DEFAULT_MPC_SETTINGS.stock).toBe('A35')
+    for (const stock of ['S30', 'S33', 'A35'] as const) {
+      const manifest = makeDocument().manifest
+      manifest.mpcSettings.stock = stock
+      expect(projectManifestSchema.parse(manifest).mpcSettings.stock).toBe(stock)
+    }
+    const unsupported = makeDocument().manifest as unknown as { mpcSettings: { stock: string } }
+    unsupported.mpcSettings.stock = 'S20'
+    expect(() => projectManifestSchema.parse(unsupported)).toThrow()
+  })
+
   it('migrates a v1 single-deck project into one deck and one artwork group', () => {
     const now = new Date().toISOString()
     const migrated = migrateProjectManifest({
@@ -41,9 +53,22 @@ describe('portable project files', () => {
       entries: [{ id: 'entry', rawName: 'Ahri', quantity: 3, section: 'main', candidateCardIds: ['card'], resolvedCardId: 'card', resolution: 'resolved', front: { kind: 'official', cardId: 'card', imageUrl: `https://cmsassets.rgpub.io/${'a'.repeat(40)}.png` } }],
       printSettings: { ...DEFAULT_PRINT_SETTINGS }, mpcSettings: { ...DEFAULT_MPC_SETTINGS }
     })
-    expect(migrated.schemaVersion).toBe(2)
+    expect(migrated.schemaVersion).toBe(3)
+    expect(migrated.game).toBe('riftbound')
     expect(migrated.decks).toHaveLength(1)
     expect(migrated.decks[0]?.entries[0]?.allocations[0]?.quantity).toBe(3)
+  })
+
+  it('migrates a v2 multi-deck project to the Riftbound game profile', () => {
+    const current = makeDocument().manifest
+    const { game: _game, schemaVersion: _schemaVersion, ...legacy } = current
+    const migrated = migrateProjectManifest({ ...legacy, schemaVersion: 2 })
+    expect(migrated).toMatchObject({
+      schemaVersion: 3,
+      game: 'riftbound',
+      printSettings: { cardWidthMm: 63, cardHeightMm: 88 },
+      mpcSettings: { product: 'custom-game-cards-63x88' }
+    })
   })
 })
 
@@ -52,6 +77,7 @@ function makeDocument(): ProjectDocument {
   return {
     manifest: {
       schemaVersion: PROJECT_SCHEMA_VERSION,
+      game: 'riftbound',
       projectId: '11111111-1111-4111-8111-111111111111',
       title: 'Test Deck', createdAt: now, updatedAt: now,
       decks: [{ id: 'deck', title: 'Test Deck', entries: [{ id: 'entry', rawName: 'Ahri', quantity: 1, section: 'main', candidateCardIds: ['card'], resolvedCardId: 'card', resolution: 'resolved', allocations: [{ id: 'allocation', quantity: 1, front: { kind: 'official', cardId: 'card', imageUrl: `https://cmsassets.rgpub.io/sanity/images/dsfx7636/game_data_live/${'a'.repeat(40)}-744x1039.png` } }] }] }],
