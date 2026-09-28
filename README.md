@@ -14,7 +14,7 @@ MPC automation selects the live quantity bracket and the project's chosen S30, S
 
 ## Download
 
-The latest published Windows binaries are on the repository's [GitHub Releases page](https://github.com/younim2837/riftbound-proxy-studio/releases). Version 0.3.2 source includes Magic support, the artwork gallery, and stock selection. The 0.3.2 Windows binaries are not published yet; build this version locally with `npm ci` and `npm run pack` until the release gates in [ROADMAP.md](ROADMAP.md) are complete.
+Version 0.3.2 Windows installer and portable builds are available as a [GitHub prerelease](https://github.com/younim2837/riftbound-proxy-studio/releases/tag/v0.3.2). This build includes Magic support, the artwork gallery, and stock selection. The live MPC editor and final-review checks listed in [ROADMAP.md](ROADMAP.md) remain open before a stable 0.3 release.
 
 ## 0.3.2 selectable MPC card stock
 

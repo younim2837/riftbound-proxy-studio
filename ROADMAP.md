@@ -45,7 +45,7 @@
 - Downloadable Scryfall bulk-index mode for fully offline catalog-wide browsing.
 - Additional edge-safety presets for unusual borderless/showcase frame geometry.
 - Support for oversized Magic products such as Planechase, Scheme, and Vanguard cards.
-- Complete live MPC editor/final-review screenshot certification for the Traditional Poker profile before publishing a 0.3 binary release.
+- Complete live MPC editor/final-review screenshot certification for the Traditional Poker profile before marking a 0.3 binary release stable.
 
 ## Output cleanup policy
 
