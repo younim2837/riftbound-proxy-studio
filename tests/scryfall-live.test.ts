@@ -41,6 +41,8 @@ describe('live Scryfall integration', () => {
       trimRect: { x: 36, y: 36, width: 750, height: 1050 },
       safeRect: { x: 72, y: 72, width: 678, height: 978 },
       sourcePreserved: true,
+      blackBorderVerified: true,
+      nonBlackBorderPixels: 0,
       placementVerified: true
     })
   }, 30_000)

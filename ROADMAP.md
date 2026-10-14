@@ -1,5 +1,13 @@
 # Proxy Studio roadmap
 
+## Completed in 0.3.5
+
+- Replaced Magic MPC sampled-color surrounds with a solid black canvas behind the complete source face.
+- Black-border/bleed pixel assertions before upload, proof metadata in Review, and automatic invalidation of old derivatives.
+- Regression tests for full face preservation, transparent corners, shifted cuts, and rejection of corrupted cached images.
+- Repeatable four-card Scryfall pixel verification and live MPC review/screenshot tooling.
+- Physical sampler verification for the replacement remains pending; do not treat a browser preview as a physical print certification.
+
 ## Completed in 0.3.4
 
 - Adjustable colored corner guides with 1–8 mm size and inside/outside trim placement.

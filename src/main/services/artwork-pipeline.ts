@@ -15,7 +15,7 @@ import {
 import { assertAllowedHttpsUrl } from '../../shared/schemas.js'
 
 const MPC_CRISP_CUT_GUARD_PX = 24
-const DERIVATIVE_PROFILE_VERSION = 'v9-full-face-pdf-edge-bleed'
+const DERIVATIVE_PROFILE_VERSION = 'v10-magic-solid-black-mpc'
 const OFFICIAL_ART_HOSTS = ['cmsassets.rgpub.io', 'cards.scryfall.io'] as const
 
 export class SharpArtworkPipeline implements ArtworkPipeline {
@@ -77,43 +77,54 @@ export class SharpArtworkPipeline implements ArtworkPipeline {
     if (outputProfile === 'mpc') {
       const face = await sharp(orientedSource)
         .resize(sourceRect.width, sourceRect.height, { fit: 'fill', kernel: sharp.kernel.lanczos3 })
-        .png()
-        .toBuffer()
-      const trimRect = trimRectFor(cardProfile)
-      const crispTrim = await sharp(face)
         .flatten({ background: '#000000' })
         .removeAlpha()
-        .extend({
-          left: sourceRect.x - trimRect.x,
-          top: sourceRect.y - trimRect.y,
-          right: trimRect.x + trimRect.width - sourceRect.x - sourceRect.width,
-          bottom: trimRect.y + trimRect.height - sourceRect.y - sourceRect.height,
-          extendWith: 'copy'
-        })
         .png()
         .toBuffer()
-      const canvasUnderlay = await sharp(crispTrim)
-        .extend({
-          left: cardProfile.mpcBleedPx,
-          top: cardProfile.mpcBleedPx,
-          right: cardProfile.mpcBleedPx,
-          bottom: cardProfile.mpcBleedPx,
-          extendWith: 'copy'
-        })
-        .blur(18)
-        .png()
-        .toBuffer()
-      const guard = Math.min(MPC_CRISP_CUT_GUARD_PX, cardProfile.mpcBleedPx)
-      const crispCutAndGuard = await sharp(crispTrim)
-        .extend({ left: guard, top: guard, right: guard, bottom: guard, extendWith: 'copy' })
-        .png()
-        .toBuffer()
-      image = sharp(canvasUnderlay).composite([{
-        input: crispCutAndGuard,
-        left: cardProfile.mpcBleedPx - guard,
-        top: cardProfile.mpcBleedPx - guard,
-        blend: 'over'
-      }])
+      if (game === 'mtg') {
+        // Keep the whole face untouched. All added trim/bleed is black, including
+        // the extreme canvas edges, so a shifted cut cannot reveal sampled colors.
+        image = sharp({ create: {
+          width: cardProfile.mpcCanvasWidthPx,
+          height: cardProfile.mpcCanvasHeightPx,
+          channels: 3,
+          background: '#000000'
+        } }).composite([{ input: face, left: sourceRect.x, top: sourceRect.y }])
+      } else {
+        const trimRect = trimRectFor(cardProfile)
+        const crispTrim = await sharp(face)
+          .extend({
+            left: sourceRect.x - trimRect.x,
+            top: sourceRect.y - trimRect.y,
+            right: trimRect.x + trimRect.width - sourceRect.x - sourceRect.width,
+            bottom: trimRect.y + trimRect.height - sourceRect.y - sourceRect.height,
+            extendWith: 'copy'
+          })
+          .png()
+          .toBuffer()
+        const canvasUnderlay = await sharp(crispTrim)
+          .extend({
+            left: cardProfile.mpcBleedPx,
+            top: cardProfile.mpcBleedPx,
+            right: cardProfile.mpcBleedPx,
+            bottom: cardProfile.mpcBleedPx,
+            extendWith: 'copy'
+          })
+          .blur(18)
+          .png()
+          .toBuffer()
+        const guard = Math.min(MPC_CRISP_CUT_GUARD_PX, cardProfile.mpcBleedPx)
+        const crispCutAndGuard = await sharp(crispTrim)
+          .extend({ left: guard, top: guard, right: guard, bottom: guard, extendWith: 'copy' })
+          .png()
+          .toBuffer()
+        image = sharp(canvasUnderlay).composite([{
+          input: crispCutAndGuard,
+          left: cardProfile.mpcBleedPx - guard,
+          top: cardProfile.mpcBleedPx - guard,
+          blend: 'over'
+        }])
+      }
     } else {
       const trim = await sharp(orientedSource)
         .resize(cardProfile.trimWidthPx, cardProfile.trimHeightPx, { fit: 'fill', kernel: sharp.kernel.lanczos3 })
@@ -141,8 +152,12 @@ export class SharpArtworkPipeline implements ArtworkPipeline {
     const trimRect = trimRectFor(profile)
     const safeRect = safeRectFor(profile)
     const sourceRect = derivative.sourceRect ?? safeRect
+    const nonBlackBorderPixels = game === 'mtg'
+      ? await countNonBlackGeneratedBorderPixels(derivative.filePath, sourceRect)
+      : null
+    const blackBorderVerified = nonBlackBorderPixels === null ? null : nonBlackBorderPixels === 0
     const placementVerified = derivative.width === profile.mpcCanvasWidthPx &&
-      derivative.height === profile.mpcCanvasHeightPx && opaque && isMpcSourcePlacementSafe(profile, sourceRect)
+      derivative.height === profile.mpcCanvasHeightPx && opaque && isMpcSourcePlacementSafe(profile, sourceRect) && blackBorderVerified !== false
     return {
       width: profile.mpcCanvasWidthPx,
       height: profile.mpcCanvasHeightPx,
@@ -155,8 +170,12 @@ export class SharpArtworkPipeline implements ArtworkPipeline {
       sourcePreserved: true,
       sourceContainedInSafeArea: isRectContained(sourceRect, safeRect),
       placementVerified,
+      borderTreatment: game === 'mtg' ? 'solid-black' : 'edge-extended',
+      blackBorderVerified,
+      nonBlackBorderPixels,
       warnings: [
         ...(!opaque ? ['The MPC derivative contains transparent pixels.'] : []),
+        ...(blackBorderVerified === false ? ['The generated Magic border or bleed contains non-black pixels.'] : []),
         ...(!isMpcSourcePlacementSafe(profile, sourceRect) ? ['The complete card face is outside the protected trim placement.'] : [])
       ]
     }
@@ -236,6 +255,25 @@ async function assertMpcDerivative(game: GameId, derivative: ImageDerivative): P
   if (!isMpcSourcePlacementSafe(profile, derivative.sourceRect)) {
     throw new Error('MPC artwork source placement exceeds the protected trim/safe-area limits.')
   }
+  if (game === 'mtg') {
+    const nonBlackPixels = await countNonBlackGeneratedBorderPixels(derivative.filePath, derivative.sourceRect!)
+    if (nonBlackPixels > 0) {
+      throw new Error(`Magic MPC artwork has ${nonBlackPixels} non-black pixels in its generated border/bleed. Upload blocked.`)
+    }
+  }
+}
+
+async function countNonBlackGeneratedBorderPixels(filePath: string, sourceRect: PrintRect): Promise<number> {
+  const { data, info } = await sharp(filePath).toColourspace('srgb').removeAlpha().raw().toBuffer({ resolveWithObject: true })
+  let count = 0
+  for (let y = 0; y < info.height; y++) {
+    for (let x = 0; x < info.width; x++) {
+      if (x >= sourceRect.x && x < sourceRect.x + sourceRect.width && y >= sourceRect.y && y < sourceRect.y + sourceRect.height) continue
+      const index = (y * info.width + x) * info.channels
+      if (data[index] !== 0 || data[index + 1] !== 0 || data[index + 2] !== 0) count++
+    }
+  }
+  return count
 }
 
 export function calculateMpcSourceRect(profile: GameProfile, sourceWidth: number, sourceHeight: number): PrintRect {

@@ -307,6 +307,9 @@ export interface MpcPlacementProof {
   sourcePreserved: boolean
   sourceContainedInSafeArea: boolean
   placementVerified: boolean
+  borderTreatment: 'solid-black' | 'edge-extended'
+  blackBorderVerified: boolean | null
+  nonBlackBorderPixels: number | null
   warnings: string[]
 }
 

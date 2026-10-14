@@ -65,7 +65,10 @@ export function installDevPreviewApi(): void {
           trimRect: { x: 36, y: 36, width: profile.trimWidthPx, height: profile.trimHeightPx },
           safeRect: { x: 72, y: 72, width: profile.trimWidthPx - 72, height: profile.trimHeightPx - 72 },
           sourceRect: { x: 61, y: 72, width: profile.trimWidthPx - 49, height: profile.trimHeightPx - 72 },
-          sourcePreserved: true, sourceContainedInSafeArea: false, placementVerified: true, warnings: []
+          sourcePreserved: true, sourceContainedInSafeArea: false, placementVerified: true,
+          borderTreatment: request.manifest.game === 'mtg' ? 'solid-black' : 'edge-extended',
+          blackBorderVerified: request.manifest.game === 'mtg' ? true : null,
+          nonBlackBorderPixels: request.manifest.game === 'mtg' ? 0 : null, warnings: []
         }
       }
     },

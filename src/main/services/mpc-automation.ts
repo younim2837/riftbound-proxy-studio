@@ -279,6 +279,9 @@ export class PlaywrightMpcAutomationDriver implements MpcAutomationDriver {
   }
 
   private async captureProof(page: Page, stage: string): Promise<void> {
+    // Assignment IDs are set before MPC finishes drawing the cards. Wait for
+    // those image requests so proof screenshots do not certify blank/loading slots.
+    await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => undefined)
     const folder = join(this.cacheDirectory, 'automation', 'proofs')
     await mkdir(folder, { recursive: true })
     const stamp = new Date().toISOString().replaceAll(/[:.]/g, '-')

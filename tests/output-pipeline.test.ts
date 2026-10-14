@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import sharp from 'sharp'
@@ -115,8 +115,8 @@ describe('artwork derivatives', () => {
     })
   }, 15_000)
 
-  it('keeps the entire MPC cut and a 24 px guard crisp instead of printing a blurred rim', async () => {
-    const folder = await mkdtemp(join(tmpdir(), 'mtg-crisp-cut-'))
+  it('keeps all generated Magic trim and bleed exactly black while preserving the complete face', async () => {
+    const folder = await mkdtemp(join(tmpdir(), 'mtg-black-border-'))
     const source = Buffer.from(`<svg width="745" height="1040" xmlns="http://www.w3.org/2000/svg">
       <rect width="745" height="1040" fill="#18222c"/>
       <rect width="745" height="16" fill="#f02020"/>
@@ -124,17 +124,55 @@ describe('artwork derivatives', () => {
       <rect width="16" height="1040" fill="#20f050"/>
       <rect x="729" width="16" height="1040" fill="#f0d020"/>
     </svg>`)
-    const result = await new SharpArtworkPipeline(folder).createMpcDerivative('mtg', 'edge-bands', new Uint8Array(source))
+    const pipeline = new SharpArtworkPipeline(folder)
+    const result = await pipeline.createMpcDerivative('mtg', 'edge-bands', new Uint8Array(source))
     const { data, info } = await sharp(result.filePath).raw().toBuffer({ resolveWithObject: true })
     const pixel = (x: number, y: number) => [...data.subarray((y * info.width + x) * info.channels, (y * info.width + x) * info.channels + 3)]
-    expect(pixel(36, 550)).toEqual(pixel(61, 550))
-    expect(pixel(12, 550)).toEqual(pixel(61, 550))
-    expect(pixel(785, 550)).toEqual(pixel(761, 550))
-    expect(pixel(809, 550)).toEqual(pixel(761, 550))
-    expect(pixel(400, 36)).toEqual(pixel(400, 72))
-    expect(pixel(400, 12)).toEqual(pixel(400, 72))
-    expect(pixel(400, 1085)).toEqual(pixel(400, 1049))
-    expect(pixel(400, 1109)).toEqual(pixel(400, 1049))
+    const rect = result.sourceRect!
+    let nonBlackPixels = 0
+    for (let y = 0; y < info.height; y++) {
+      for (let x = 0; x < info.width; x++) {
+        if (x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height) continue
+        if (pixel(x, y).some((channel) => channel !== 0)) nonBlackPixels++
+      }
+    }
+    expect(nonBlackPixels).toBe(0)
+    const rasterSource = await sharp(source).png().toBuffer()
+    const expectedFace = await sharp(rasterSource).resize(rect.width, rect.height, { fit: 'fill', kernel: sharp.kernel.lanczos3 }).flatten({ background: '#000000' }).removeAlpha().raw().toBuffer()
+    const actualFace = await sharp(result.filePath).extract({ left: rect.x, top: rect.y, width: rect.width, height: rect.height }).raw().toBuffer()
+    expect(actualFace.equals(expectedFace)).toBe(true)
+    const proof = await pipeline.createMpcPlacementProof('mtg', result)
+    expect(proof).toMatchObject({ borderTreatment: 'solid-black', blackBorderVerified: true, nonBlackBorderPixels: 0, placementVerified: true })
+    // Test each perimeter pixel at nominal trim and every integer offset through
+    // +/-23 px (~1.95 mm), staying outside the preserved face on both sides.
+    // This is a stress test, not a claimed MPC manufacturing tolerance.
+    let nonBlackCutPixels = 0
+    for (let shift = -23; shift <= 23; shift++) {
+      for (let x = 36 + shift; x < 786 + shift; x++) {
+        if (pixel(x, 36 + shift).some((channel) => channel !== 0)) nonBlackCutPixels++
+        if (pixel(x, 1085 + shift).some((channel) => channel !== 0)) nonBlackCutPixels++
+      }
+      for (let y = 36 + shift; y < 1086 + shift; y++) {
+        if (pixel(36 + shift, y).some((channel) => channel !== 0)) nonBlackCutPixels++
+        if (pixel(785 + shift, y).some((channel) => channel !== 0)) nonBlackCutPixels++
+      }
+    }
+    expect(nonBlackCutPixels).toBe(0)
+  }, 15_000)
+
+  it('flattens Magic transparent corners against black and blocks an unsafe cached upload', async () => {
+    const folder = await mkdtemp(join(tmpdir(), 'mtg-cache-border-'))
+    const source = await sharp(Buffer.from('<svg width="744" height="1040" xmlns="http://www.w3.org/2000/svg"><rect width="744" height="1040" rx="36" fill="#ebc270"/></svg>')).png().toBuffer()
+    const pipeline = new SharpArtworkPipeline(folder)
+    const result = await pipeline.createMpcDerivative('mtg', 'rounded-corners', source)
+    const rect = result.sourceRect!
+    expect((await sharp(result.filePath).metadata()).hasAlpha).toBe(false)
+    const corner = await sharp(result.filePath).extract({ left: rect.x, top: rect.y, width: 1, height: 1 }).raw().toBuffer()
+    expect([...corner]).toEqual([0, 0, 0])
+    const corrupt = await sharp(result.filePath).composite([{ input: await sharp({ create: { width: 1, height: 1, channels: 3, background: '#ffeebb' } }).png().toBuffer(), left: 0, top: 0 }]).removeAlpha().png().toBuffer()
+    await writeFile(result.filePath, corrupt)
+    expect(await pipeline.createMpcPlacementProof('mtg', result)).toMatchObject({ blackBorderVerified: false, nonBlackBorderPixels: 1, placementVerified: false })
+    await expect(pipeline.createMpcDerivative('mtg', 'rounded-corners', source)).rejects.toThrow('Upload blocked')
   })
 
   it('fills the PDF trim with the full source and stretches its edge into bleed', async () => {
