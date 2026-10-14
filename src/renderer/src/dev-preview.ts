@@ -59,12 +59,12 @@ export function installDevPreviewApi(): void {
     renderMpcProof: async (request: Parameters<RendererApi['renderMpcProof']>[0]) => {
       const profile = GAME_PROFILES[request.manifest.game]
       return {
-        png: pngBytes(), cutPng: pngBytes(), deckId: request.deckId ?? 'preview-deck', entryId: request.entryId ?? 'preview-entry', allocationId: request.allocationId ?? 'preview-allocation', label: 'Browser proof',
+        sourcePng: pngBytes(), sourceWidth: 744, sourceHeight: 1040, png: pngBytes(), cutPng: pngBytes(), deckId: request.deckId ?? 'preview-deck', entryId: request.entryId ?? 'preview-entry', allocationId: request.allocationId ?? 'preview-allocation', label: 'Browser proof',
         proof: {
           width: profile.mpcCanvasWidthPx, height: profile.mpcCanvasHeightPx, opaque: true, transparentPixels: 0, bleedPx: 36 as const,
           trimRect: { x: 36, y: 36, width: profile.trimWidthPx, height: profile.trimHeightPx },
           safeRect: { x: 72, y: 72, width: profile.trimWidthPx - 72, height: profile.trimHeightPx - 72 },
-          sourceRect: { x: 61, y: 72, width: profile.trimWidthPx - 49, height: profile.trimHeightPx - 72 },
+          sourceRect: request.manifest.game === 'mtg' ? { x: 36, y: 36, width: 750, height: 1050 } : { x: 61, y: 72, width: profile.trimWidthPx - 49, height: profile.trimHeightPx - 72 },
           sourcePreserved: true, sourceContainedInSafeArea: false, placementVerified: true,
           borderTreatment: request.manifest.game === 'mtg' ? 'solid-black' : 'edge-extended',
           blackBorderVerified: request.manifest.game === 'mtg' ? true : null,

@@ -322,6 +322,9 @@ export interface MpcProofRequest {
 }
 
 export interface MpcProofResult {
+  sourcePng: Uint8Array
+  sourceWidth: number
+  sourceHeight: number
   png: Uint8Array
   cutPng: Uint8Array
   deckId: string

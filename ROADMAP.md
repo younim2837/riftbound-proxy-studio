@@ -1,6 +1,14 @@
 # Proxy Studio roadmap
 
-## Completed in 0.3.5
+## Completed in 0.3.6
+
+- Fit the complete Magic face to physical trim at original proportions, removing safe-guide-based shrinkage and the wide generated surround.
+- Add black bleed outside trim and retain only minimal aspect-ratio padding for standard Scryfall images.
+- Source face / After trim / Upload + guides comparisons and accurate distinction between nominal trim preservation and physical safe-area risk.
+- Full-scale pixel regression tests, cache invalidation, and live MPC editor/review checks for four real printings.
+- Physical sampler verification for this full-scale replacement remains pending.
+
+## Completed in 0.3.5 (superseded for Magic scaling)
 
 - Replaced Magic MPC sampled-color surrounds with a solid black canvas behind the complete source face.
 - Black-border/bleed pixel assertions before upload, proof metadata in Review, and automatic invalidation of old derivatives.

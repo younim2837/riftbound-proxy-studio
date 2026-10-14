@@ -200,7 +200,7 @@ p { color: var(--muted); line-height: 1.6; }
 .mpc-proof-section { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 28px; align-items: center; margin-top: 24px; padding: 22px; border: 1px solid #2e4c50; border-radius: 14px; background: linear-gradient(120deg, #10262a, #101821); }
 .mpc-proof-copy h2 { margin: 6px 0 8px; font-size: 21px; }.mpc-proof-copy p { max-width: 650px; color: #9aacb4; font-size: 12px; line-height: 1.6; }.mpc-proof-copy label { display: flex; flex-direction: column; gap: 5px; max-width: 360px; color: #91a4ad; font-size: 10px; }.mpc-proof-copy select { padding: 8px; color: #eaf1f3; background: #101922; border: 1px solid #354650; border-radius: 7px; }
 .mpc-proof-display { display: flex; flex-direction: column; align-items: center; gap: 12px; }
-.mpc-proof-toggle { width: min(100%, 320px); display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border: 1px solid #344b54; border-radius: 9px; background: #0a1419; }
+.mpc-proof-toggle { width: min(100%, 320px); display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 4px; border: 1px solid #344b54; border-radius: 9px; background: #0a1419; }
 .mpc-proof-toggle button { padding: 8px 7px; border: 0; border-radius: 6px; color: #8faab0; background: transparent; cursor: pointer; font-size: 10px; font-weight: 700; }.mpc-proof-toggle button.active { color: #061712; background: #6cdecc; }
 .mpc-proof-frame { position: relative; width: min(100%, 320px); aspect-ratio: 816 / 1110; overflow: hidden; background: #081014; box-shadow: 0 10px 35px #000b; }.mpc-proof-frame > img { display: block; width: 100%; height: 100%; object-fit: fill; }
 .mpc-proof-frame.cut { border: 1px solid #75828a; }

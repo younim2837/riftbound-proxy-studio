@@ -15,7 +15,7 @@ import {
 import { assertAllowedHttpsUrl } from '../../shared/schemas.js'
 
 const MPC_CRISP_CUT_GUARD_PX = 24
-const DERIVATIVE_PROFILE_VERSION = 'v10-magic-solid-black-mpc'
+const DERIVATIVE_PROFILE_VERSION = 'v11-magic-full-trim-face'
 const OFFICIAL_ART_HOSTS = ['cmsassets.rgpub.io', 'cards.scryfall.io'] as const
 
 export class SharpArtworkPipeline implements ArtworkPipeline {
@@ -76,20 +76,22 @@ export class SharpArtworkPipeline implements ArtworkPipeline {
     let image: Sharp
     if (outputProfile === 'mpc') {
       const face = await sharp(orientedSource)
-        .resize(sourceRect.width, sourceRect.height, { fit: 'fill', kernel: sharp.kernel.lanczos3 })
+        .resize(game === 'mtg' ? cardProfile.trimWidthPx : sourceRect.width, game === 'mtg' ? cardProfile.trimHeightPx : sourceRect.height, {
+          fit: game === 'mtg' ? 'contain' : 'fill', background: '#000000', kernel: sharp.kernel.lanczos3
+        })
         .flatten({ background: '#000000' })
         .removeAlpha()
         .png()
         .toBuffer()
       if (game === 'mtg') {
-        // Keep the whole face untouched. All added trim/bleed is black, including
-        // the extreme canvas edges, so a shifted cut cannot reveal sampled colors.
+        // Scryfall is already a finished card face. Fit it to physical trim,
+        // never to MPC's internal safe guide; the 36 px bleed is added outside it.
         image = sharp({ create: {
           width: cardProfile.mpcCanvasWidthPx,
           height: cardProfile.mpcCanvasHeightPx,
           channels: 3,
           background: '#000000'
-        } }).composite([{ input: face, left: sourceRect.x, top: sourceRect.y }])
+        } }).composite([{ input: face, left: cardProfile.mpcBleedPx, top: cardProfile.mpcBleedPx }])
       } else {
         const trimRect = trimRectFor(cardProfile)
         const crispTrim = await sharp(face)
@@ -157,7 +159,7 @@ export class SharpArtworkPipeline implements ArtworkPipeline {
       : null
     const blackBorderVerified = nonBlackBorderPixels === null ? null : nonBlackBorderPixels === 0
     const placementVerified = derivative.width === profile.mpcCanvasWidthPx &&
-      derivative.height === profile.mpcCanvasHeightPx && opaque && isMpcSourcePlacementSafe(profile, sourceRect) && blackBorderVerified !== false
+      derivative.height === profile.mpcCanvasHeightPx && opaque && isMpcSourcePlacementValid(profile, sourceRect) && blackBorderVerified !== false
     return {
       width: profile.mpcCanvasWidthPx,
       height: profile.mpcCanvasHeightPx,
@@ -176,7 +178,8 @@ export class SharpArtworkPipeline implements ArtworkPipeline {
       warnings: [
         ...(!opaque ? ['The MPC derivative contains transparent pixels.'] : []),
         ...(blackBorderVerified === false ? ['The generated Magic border or bleed contains non-black pixels.'] : []),
-        ...(!isMpcSourcePlacementSafe(profile, sourceRect) ? ['The complete card face is outside the protected trim placement.'] : [])
+        ...(!isMpcSourcePlacementValid(profile, sourceRect) ? ['The complete card face is outside the trim placement.'] : []),
+        ...(game === 'mtg' && !isRectContained(sourceRect, safeRect) ? ['Full-card scale preserves the complete face at nominal trim. Source edge details may be outside MPC’s safe-area guide and can be affected by a shifted physical cut.'] : [])
       ]
     }
   }
@@ -252,8 +255,8 @@ async function assertMpcDerivative(game: GameId, derivative: ImageDerivative): P
   if (metadata.hasAlpha || transparentPixels > 0) {
     throw new Error(`MPC artwork is not fully opaque (${transparentPixels} transparent pixels).`)
   }
-  if (!isMpcSourcePlacementSafe(profile, derivative.sourceRect)) {
-    throw new Error('MPC artwork source placement exceeds the protected trim/safe-area limits.')
+  if (!isMpcSourcePlacementValid(profile, derivative.sourceRect)) {
+    throw new Error('MPC artwork source placement exceeds its allowed trim placement.')
   }
   if (game === 'mtg') {
     const nonBlackPixels = await countNonBlackGeneratedBorderPixels(derivative.filePath, derivative.sourceRect!)
@@ -277,6 +280,13 @@ async function countNonBlackGeneratedBorderPixels(filePath: string, sourceRect: 
 }
 
 export function calculateMpcSourceRect(profile: GameProfile, sourceWidth: number, sourceHeight: number): PrintRect {
+  if (profile.id === 'mtg') {
+    const trim = trimRectFor(profile)
+    const scale = Math.min(trim.width / sourceWidth, trim.height / sourceHeight)
+    const width = Math.min(trim.width, Math.round(sourceWidth * scale))
+    const height = Math.min(trim.height, Math.round(sourceHeight * scale))
+    return { x: trim.x + Math.floor((trim.width - width) / 2), y: trim.y + Math.floor((trim.height - height) / 2), width, height }
+  }
   const safe = safeRectFor(profile)
   const maxWidth = safe.width + profile.mpcMaxHorizontalSafeOverscanPx * 2
   const scale = Math.min(safe.height / sourceHeight, maxWidth / sourceWidth)
@@ -308,11 +318,12 @@ function isRectContained(inner: PrintRect, outer: PrintRect): boolean {
   return inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.width <= outer.x + outer.width && inner.y + inner.height <= outer.y + outer.height
 }
 
-function isMpcSourcePlacementSafe(profile: GameProfile, sourceRect: ImageDerivative['sourceRect']): boolean {
+function isMpcSourcePlacementValid(profile: GameProfile, sourceRect: ImageDerivative['sourceRect']): boolean {
   if (!sourceRect) return false
   const trim = trimRectFor(profile)
   const safe = safeRectFor(profile)
   const withinTrim = isRectContained(sourceRect, trim)
+  if (profile.id === 'mtg') return withinTrim
   const verticalInsideSafe = sourceRect.y >= safe.y && sourceRect.y + sourceRect.height <= safe.y + safe.height
   const leftOverscan = Math.max(0, safe.x - sourceRect.x)
   const rightOverscan = Math.max(0, sourceRect.x + sourceRect.width - (safe.x + safe.width))

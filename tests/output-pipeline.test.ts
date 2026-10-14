@@ -107,7 +107,7 @@ describe('artwork derivatives', () => {
     expect(proof).toMatchObject({
       trimRect: { x: 36, y: 36, width: 750, height: 1050 },
       safeRect: { x: 72, y: 72, width: 678, height: 978 },
-      sourceRect: { x: 61, y: 72, width: 701, height: 978 },
+      sourceRect: { x: 36, y: 37, width: 750, height: 1047 },
       opaque: true,
       transparentPixels: 0,
       sourcePreserved: true,
@@ -115,7 +115,7 @@ describe('artwork derivatives', () => {
     })
   }, 15_000)
 
-  it('keeps all generated Magic trim and bleed exactly black while preserving the complete face', async () => {
+  it('fills Magic trim with the complete full-scale face and adds black bleed only outside it', async () => {
     const folder = await mkdtemp(join(tmpdir(), 'mtg-black-border-'))
     const source = Buffer.from(`<svg width="745" height="1040" xmlns="http://www.w3.org/2000/svg">
       <rect width="745" height="1040" fill="#18222c"/>
@@ -138,26 +138,18 @@ describe('artwork derivatives', () => {
     }
     expect(nonBlackPixels).toBe(0)
     const rasterSource = await sharp(source).png().toBuffer()
-    const expectedFace = await sharp(rasterSource).resize(rect.width, rect.height, { fit: 'fill', kernel: sharp.kernel.lanczos3 }).flatten({ background: '#000000' }).removeAlpha().raw().toBuffer()
-    const actualFace = await sharp(result.filePath).extract({ left: rect.x, top: rect.y, width: rect.width, height: rect.height }).raw().toBuffer()
-    expect(actualFace.equals(expectedFace)).toBe(true)
+    const expectedTrim = await sharp(rasterSource).resize(750, 1050, { fit: 'contain', background: '#000000', kernel: sharp.kernel.lanczos3 }).flatten({ background: '#000000' }).removeAlpha().raw().toBuffer()
+    const actualTrim = await sharp(result.filePath).extract({ left: 36, top: 36, width: 750, height: 1050 }).raw().toBuffer()
+    expect(actualTrim.equals(expectedTrim)).toBe(true)
+    expect(rect).toEqual({ x: 36, y: 37, width: 750, height: 1047 })
+    expect(pixel(36, 500)[1]).toBeGreaterThan(200)
+    expect(pixel(785, 500)[0]).toBeGreaterThan(200)
+    expect(pixel(400, 37)[0]).toBeGreaterThan(200)
+    expect(pixel(400, 1083)[2]).toBeGreaterThan(200)
     const proof = await pipeline.createMpcPlacementProof('mtg', result)
     expect(proof).toMatchObject({ borderTreatment: 'solid-black', blackBorderVerified: true, nonBlackBorderPixels: 0, placementVerified: true })
-    // Test each perimeter pixel at nominal trim and every integer offset through
-    // +/-23 px (~1.95 mm), staying outside the preserved face on both sides.
-    // This is a stress test, not a claimed MPC manufacturing tolerance.
-    let nonBlackCutPixels = 0
-    for (let shift = -23; shift <= 23; shift++) {
-      for (let x = 36 + shift; x < 786 + shift; x++) {
-        if (pixel(x, 36 + shift).some((channel) => channel !== 0)) nonBlackCutPixels++
-        if (pixel(x, 1085 + shift).some((channel) => channel !== 0)) nonBlackCutPixels++
-      }
-      for (let y = 36 + shift; y < 1086 + shift; y++) {
-        if (pixel(36 + shift, y).some((channel) => channel !== 0)) nonBlackCutPixels++
-        if (pixel(785 + shift, y).some((channel) => channel !== 0)) nonBlackCutPixels++
-      }
-    }
-    expect(nonBlackCutPixels).toBe(0)
+    expect(proof.sourceContainedInSafeArea).toBe(false)
+    expect(proof.warnings.join(' ')).toContain('shifted physical cut')
   }, 15_000)
 
   it('flattens Magic transparent corners against black and blocks an unsafe cached upload', async () => {

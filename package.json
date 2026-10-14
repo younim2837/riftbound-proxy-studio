@@ -1,6 +1,6 @@
 {
   "name": "riftbound-proxy-studio",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "private": true,
   "description": "A desktop studio for preparing Riftbound and Magic playtest projects for PDF and MakePlayingCards.",
   "main": "./out/main/index.js",

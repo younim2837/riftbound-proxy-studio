@@ -896,8 +896,8 @@ function ReviewPanel(props: {
   const [pageIndex, setPageIndex] = useState(0)
   const [preview, setPreview] = useState<(Omit<PrintPreviewResult, 'png'> & { url: string }) | null>(null)
   const [proofAllocationId, setProofAllocationId] = useState(proofOptions[0]?.allocation.id ?? '')
-  const [proofView, setProofView] = useState<'cut' | 'upload'>('cut')
-  const [proof, setProof] = useState<{ uploadUrl: string; cutUrl: string; label: string; proof: MpcPlacementProof } | null>(null)
+  const [proofView, setProofView] = useState<'source' | 'cut' | 'upload'>('cut')
+  const [proof, setProof] = useState<{ sourceUrl: string; sourceWidth: number; sourceHeight: number; uploadUrl: string; cutUrl: string; label: string; proof: MpcPlacementProof } | null>(null)
   const [proofError, setProofError] = useState<string | null>(null)
   const [previewBusy, setPreviewBusy] = useState(true)
   const [previewError, setPreviewError] = useState<string | null>(null)
@@ -933,6 +933,7 @@ function ReviewPanel(props: {
     let disposed = false
     let uploadUrl: string | undefined
     let cutUrl: string | undefined
+    let sourceUrl: string | undefined
     setProof(null)
     setProofError(null)
     void window.riftboundStudio.renderMpcProof({ manifest, customAssets: props.document.customAssets, deckId: option.deck.id, entryId: option.entry.id, allocationId: option.allocation.id })
@@ -940,10 +941,11 @@ function ReviewPanel(props: {
         if (disposed) return
         uploadUrl = URL.createObjectURL(new Blob([new Uint8Array(result.png).buffer as ArrayBuffer], { type: 'image/png' }))
         cutUrl = URL.createObjectURL(new Blob([new Uint8Array(result.cutPng).buffer as ArrayBuffer], { type: 'image/png' }))
-        setProof({ uploadUrl, cutUrl, label: result.label, proof: result.proof })
+        sourceUrl = URL.createObjectURL(new Blob([new Uint8Array(result.sourcePng).buffer as ArrayBuffer], { type: 'image/png' }))
+        setProof({ sourceUrl, sourceWidth: result.sourceWidth, sourceHeight: result.sourceHeight, uploadUrl, cutUrl, label: result.label, proof: result.proof })
       })
       .catch((reason) => { if (!disposed) setProofError(formatError(reason)) })
-    return () => { disposed = true; if (uploadUrl) URL.revokeObjectURL(uploadUrl); if (cutUrl) URL.revokeObjectURL(cutUrl) }
+    return () => { disposed = true; if (uploadUrl) URL.revokeObjectURL(uploadUrl); if (cutUrl) URL.revokeObjectURL(cutUrl); if (sourceUrl) URL.revokeObjectURL(sourceUrl) }
   }, [manifest, proofAllocationId, props.document.customAssets])
 
   function updateBleed(bleedMm: number): void {
@@ -1006,24 +1008,25 @@ function ReviewPanel(props: {
         </div>
       </div>
       <div className="mpc-proof-section">
-        <div className="mpc-proof-copy"><div className="eyebrow">MPC placement proof</div><h2>Inspect the card after the cut.</h2><p>The finished-size view removes the outer 36 px bleed from every side of the exact MPC upload. {manifest.game === 'mtg' ? 'Magic uses a solid black surround through the entire generated border and bleed. The complete card face is preserved, with no colored edge extension or blur.' : 'The full cut area has a crisp edge-derived border; soft blur starts only beyond a 24 px guard outside the cut.'} Open the upload view to check the name, mana cost, rules, and bottom details against the dashed safe-area guide.</p>
+        <div className="mpc-proof-copy"><div className="eyebrow">MPC placement proof</div><h2>{manifest.game === 'mtg' ? 'Full card face at finished-card scale.' : 'Inspect the card after the cut.'}</h2><p>{manifest.game === 'mtg' ? 'The complete source fills the cut rectangle at its original proportions. Only minimal fit padding is added if the aspect ratios differ; the separate 36 px black bleed sits outside the finished card. Compare Source face and After trim to check the original border thickness and artwork size.' : 'The finished-size view removes the outer 36 px bleed from every side of the exact MPC upload. The full cut area has a crisp edge-derived border; soft blur starts only beyond a 24 px guard outside the cut.'} Open Upload + guides to inspect details near MPC’s dashed safe-area boundary.</p>
           <label>Proof artwork group<select value={proofAllocationId} onChange={(event) => setProofAllocationId(event.target.value)}>{proofOptions.map(({ deck, entry, allocation }, index) => <option value={allocation.id} key={allocation.id}>{deck.title} · {entry.rawName} · Artwork {index + 1} ×{allocation.quantity}</option>)}</select></label>
-          {proof && <div className={`proof-status ${proof.proof.placementVerified ? 'good' : 'bad'}`}><strong>{proof.proof.placementVerified ? 'Image size, opacity, and placement verified' : 'Derivative failed verification'}</strong><span>{proof.proof.width}×{proof.proof.height} px upload · {proof.proof.trimRect.width}×{proof.proof.trimRect.height} px cut · sharp source covers {Math.round(proof.proof.sourceRect.width / proof.proof.trimRect.width * 100)}% of cut width and {Math.round(proof.proof.sourceRect.height / proof.proof.trimRect.height * 100)}% of cut height</span></div>}
+          {proof && <div className={`proof-status ${proof.proof.placementVerified ? 'good' : 'bad'}`}><strong>{proof.proof.placementVerified ? 'Image dimensions, opacity, and nominal cut placement verified' : 'Derivative failed verification'}</strong><span>{proof.proof.width}×{proof.proof.height} px upload · {proof.proof.trimRect.width}×{proof.proof.trimRect.height} px cut · source fills {(proof.proof.sourceRect.width / proof.proof.trimRect.width * 100).toFixed(1)}% of cut width and {(proof.proof.sourceRect.height / proof.proof.trimRect.height * 100).toFixed(1)}% of cut height</span></div>}
           {proofError && <div className="message error">{proofError}</div>}
-          {proof && proof.proof.blackBorderVerified !== null && <div className={`proof-status ${proof.proof.blackBorderVerified ? 'good' : 'bad'}`}><strong>{proof.proof.blackBorderVerified ? 'Solid black border and bleed verified' : 'Black border failed verification'}</strong><span>{proof.proof.nonBlackBorderPixels} non-black pixels outside the preserved source face</span></div>}
-          <p className="proof-caution">The app verifies image geometry, not the position of each card’s text. Check unusual frames in the upload view before ordering; MPC may round corners or vary the physical cut.</p>
+          {proof && proof.proof.blackBorderVerified !== null && <div className={`proof-status ${proof.proof.blackBorderVerified ? 'good' : 'bad'}`}><strong>{proof.proof.blackBorderVerified ? 'Separate black bleed verified' : 'Bleed failed verification'}</strong><span>{proof.proof.nonBlackBorderPixels} non-black pixels outside the preserved source face</span></div>}
+          <p className="proof-caution">{manifest.game === 'mtg' ? 'The intended cut retains the full source face. MPC’s physical cut can shift; footer text or other details beyond the dashed safe-area guide are not guaranteed by MPC. The guide is a cutting-risk reference, not a box the whole card must fit inside.' : 'The app verifies image geometry, not the position of each card’s text. Check unusual frames in the upload view before ordering; MPC may round corners or vary the physical cut.'}</p>
         </div>
         <div className="mpc-proof-display">
           <div className="mpc-proof-toggle" role="group" aria-label="MPC proof view">
+            <button type="button" aria-pressed={proofView === 'source'} className={proofView === 'source' ? 'active' : ''} onClick={() => setProofView('source')}>Source face</button>
             <button type="button" aria-pressed={proofView === 'cut'} className={proofView === 'cut' ? 'active' : ''} onClick={() => setProofView('cut')}>After trim</button>
             <button type="button" aria-pressed={proofView === 'upload'} className={proofView === 'upload' ? 'active' : ''} onClick={() => setProofView('upload')}>Upload + guides</button>
           </div>
-          <div className={`mpc-proof-frame ${proofView}`} style={{ aspectRatio: proofView === 'cut' ? `${gameProfile.trimWidthPx} / ${gameProfile.trimHeightPx}` : `${gameProfile.mpcCanvasWidthPx} / ${gameProfile.mpcCanvasHeightPx}` }}>
-            {proof && <img src={proofView === 'cut' ? proof.cutUrl : proof.uploadUrl} alt={`${proof.label} ${proofView === 'cut' ? 'after removing the 36 px MPC bleed' : 'full MPC upload with cut and safe-area guides'}`} />}
+          <div className={`mpc-proof-frame ${proofView}`} style={{ aspectRatio: proofView === 'source' && proof ? `${proof.sourceWidth} / ${proof.sourceHeight}` : proofView === 'cut' ? `${gameProfile.trimWidthPx} / ${gameProfile.trimHeightPx}` : `${gameProfile.mpcCanvasWidthPx} / ${gameProfile.mpcCanvasHeightPx}` }}>
+            {proof && <img src={proofView === 'source' ? proof.sourceUrl : proofView === 'cut' ? proof.cutUrl : proof.uploadUrl} alt={`${proof.label} ${proofView === 'source' ? 'original source face without added bleed' : proofView === 'cut' ? 'after removing the 36 px MPC bleed' : 'full MPC upload with cut and safe-area guides'}`} />}
             {proof && proofView === 'upload' && <><div className="trim-guide" style={proofGuideStyle(proof.proof.trimRect, proof.proof)}><span>Cut / trim</span></div>
               <div className="safe-guide" style={proofGuideStyle(proof.proof.safeRect, proof.proof)}><span>Safe area</span></div></>}
           </div>
-          <span className="mpc-proof-caption">{proofView === 'cut' ? 'Exact rectangular cut crop · 36 px removed on every side' : `Full ${gameProfile.mpcCanvasWidthPx}×${gameProfile.mpcCanvasHeightPx} upload · yellow cut line · dashed safe-area line`}</span>
+          <span className="mpc-proof-caption">{proofView === 'source' ? 'Original source face · no added bleed or scaling' : proofView === 'cut' ? 'Exact rectangular cut crop · 36 px removed on every side' : `Full ${gameProfile.mpcCanvasWidthPx}×${gameProfile.mpcCanvasHeightPx} upload · yellow cut line · dashed safe-area line`}</span>
         </div>
       </div>
       <div className="panel-actions"><span>Duplex backs are mirrored by column for physical alignment.</span><button className="button primary" onClick={props.onContinue}>Choose an output</button></div>

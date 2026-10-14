@@ -171,7 +171,14 @@ function registerIpc(cacheDirectory: string): void {
     const source = await resolver.load(allocation.front, request.customAssets)
     const derivative = await pipeline.createMpcDerivative(request.manifest.game, source.sourceId, source.bytes)
     const proof = await pipeline.createMpcPlacementProof(request.manifest.game, derivative)
+    const original = sharp(source.bytes)
+    const originalMetadata = await original.metadata()
+    if (originalMetadata.width! > originalMetadata.height!) original.rotate(90)
+    const originalPng = await original.flatten({ background: '#000000' }).removeAlpha().png().toBuffer({ resolveWithObject: true })
     return {
+      sourcePng: new Uint8Array(originalPng.data),
+      sourceWidth: originalPng.info.width,
+      sourceHeight: originalPng.info.height,
       png: new Uint8Array(await readFile(derivative.filePath)),
       cutPng: await pipeline.createMpcCutPreview(request.manifest.game, derivative),
       deckId: selected.deck.id,

@@ -14,15 +14,23 @@ MPC automation selects the live quantity bracket and the project's chosen S30, S
 
 ## Download
 
-Version 0.3.5 Windows installer, portable executable, and portable ZIP are available as a [GitHub preview release](https://github.com/younim2837/riftbound-proxy-studio/releases/tag/v0.3.5). Use 0.3.5 for new Magic MPC projects: older versions can produce a colored outer rim. The app includes Magic support, the artwork gallery, stock selection, and configurable PDF sheet guides. Physical results from the corrected build remain to be confirmed.
+Version 0.3.6 Windows installer, portable executable, and portable ZIP are available as a [GitHub preview release](https://github.com/younim2837/riftbound-proxy-studio/releases/tag/v0.3.6). Use 0.3.6 for new Magic MPC projects: earlier versions either generate colored surrounds or shrink the card inside an oversized border. Physical results from the full-scale build remain to be confirmed.
 
-## 0.3.5 solid black Magic MPC borders
+## 0.3.6 full-scale Magic faces
+
+- Scryfall provides a finished card face, so Magic artwork now fits the 750×1050 px trim rectangle at its original proportions, rather than shrinking to the internal safety guide. The complete image is retained; nothing is cropped to create bleed.
+- Standard 744/745×1040 px sources fill the entire trim width and need only 2–3 px of total vertical padding. Black bleed is added separately outside trim to form the 822×1122 px upload.
+- Review has Source face, After trim, and Upload + guides views for direct comparison. Placement verification concerns the intended cut; MPC's physical cut may vary, and source footer details outside its safe guide remain at risk. The app does not claim that all source text is inside that guide.
+- Old derivatives regenerate automatically, with no change to project files or artwork choices. Riftbound and PDF processing retain their existing geometry.
+- `npm run verify:mpc:black-border` now checks full-scale cut pixels against a direct aspect-preserving fit of four real Scryfall printings, including Cormela SNC 177. Add `-- --mpc` to populate a new MPC project through review and capture screenshots without checkout.
+
+## 0.3.5 solid black Magic MPC borders (superseded)
 
 - Physical sampler feedback exposed an incorrect colored surround outside Magic's original black border. Magic MPC derivatives now composite the full preserved face onto an entirely black canvas; every generated trim and bleed pixel is RGB `(0,0,0)`.
 - No artwork colors or blur are generated around Magic fronts or backs. This also gives alternate/borderless source art a black surround. Riftbound's edge extension and PDF sheets are unchanged.
 - Cache keys changed so previous derivatives regenerate automatically. The pre-upload check rejects any non-black pixel outside the preserved Magic source rectangle.
 - Review reports the black-border pixel check, alongside the exact After trim and Upload + guides views. Image checks do not guarantee physical manufacturing or inspect the text positions in unusual source frames.
-- The repeatable `npm run verify:mpc:black-border` check compares four real cached Scryfall printings, including Cormela SNC 177, against their normalized source pixels and tests all 2,209 independent x/y shifts through ±23 px. This is a stress test, not a published manufacturing tolerance. Add `-- --mpc` to also populate a new MPC project through review and capture screenshots without checkout.
+- This removed the colored rim but retained an undersized source face inside a wide black surround. Version 0.3.6 corrects that scaling and replaces the surround-based cut-shift test with full-scale source/cut comparisons.
 
 ## 0.3.4 print-sheet guides
 
@@ -59,7 +67,7 @@ Version 0.3.5 Windows installer, portable executable, and portable ZIP are avail
 - Magic imports resolve card identity and printings through Scryfall. The provider batches deck resolution, throttles live requests, caches metadata and images locally, supports catalog search, and lazily loads alternate printings.
 - Scryfall PNGs are preferred. Transform and modal double-faced cards automatically assign the reverse Scryfall face as that artwork group's physical back, which can still be overridden.
 - Magic uses MPC Traditional Poker geometry: 63.5×88.9 mm trim, 822×1122 px upload canvas, 750×1050 px cut rectangle at `(36,36)`, 36 px sacrificial bleed, and a further 36 px internal safe guide.
-- For MPC uploads, the complete source is proportionally protected inside trim. Magic uses a solid black surround and bleed; Riftbound uses opaque crisp edge extension with a 24 px cut guard and softened outermost bleed. PDF sheets use separate edge-extended derivatives.
+- For MPC uploads, Magic fits the complete source to the full trim rectangle with black bleed added outside it. Riftbound retains its protected source placement and opaque crisp edge extension with a 24 px cut guard and softened outermost bleed. PDF sheets use separate edge-extended derivatives.
 - Project schema 3 stores the selected game. Schema 1 and 2 projects migrate automatically to Riftbound. New `.proxyproject` files and existing `.rbproxy` files are both supported.
 
 ## 0.2.0 combined projects and per-copy artwork
