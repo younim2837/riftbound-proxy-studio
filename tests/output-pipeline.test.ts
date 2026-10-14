@@ -99,6 +99,10 @@ describe('artwork derivatives', () => {
     const pipeline = new SharpArtworkPipeline(folder)
     const result = await pipeline.createMpcDerivative('mtg', 'scryfall-png', new Uint8Array(source))
     const proof = await pipeline.createMpcPlacementProof('mtg', result)
+    const cutPreview = await pipeline.createMpcCutPreview('mtg', result)
+    const expectedCutPixels = await sharp(result.filePath).extract({ left: 36, top: 36, width: 750, height: 1050 }).raw().toBuffer()
+    expect((await sharp(cutPreview).metadata())).toMatchObject({ width: 750, height: 1050 })
+    expect(await sharp(cutPreview).raw().toBuffer()).toEqual(expectedCutPixels)
     expect([result.width, result.height]).toEqual([822, 1122])
     expect(proof).toMatchObject({
       trimRect: { x: 36, y: 36, width: 750, height: 1050 },
@@ -109,6 +113,42 @@ describe('artwork derivatives', () => {
       sourcePreserved: true,
       placementVerified: true
     })
+  }, 15_000)
+
+  it('keeps the entire MPC cut and a 24 px guard crisp instead of printing a blurred rim', async () => {
+    const folder = await mkdtemp(join(tmpdir(), 'mtg-crisp-cut-'))
+    const source = Buffer.from(`<svg width="745" height="1040" xmlns="http://www.w3.org/2000/svg">
+      <rect width="745" height="1040" fill="#18222c"/>
+      <rect width="745" height="16" fill="#f02020"/>
+      <rect y="1024" width="745" height="16" fill="#2050f0"/>
+      <rect width="16" height="1040" fill="#20f050"/>
+      <rect x="729" width="16" height="1040" fill="#f0d020"/>
+    </svg>`)
+    const result = await new SharpArtworkPipeline(folder).createMpcDerivative('mtg', 'edge-bands', new Uint8Array(source))
+    const { data, info } = await sharp(result.filePath).raw().toBuffer({ resolveWithObject: true })
+    const pixel = (x: number, y: number) => [...data.subarray((y * info.width + x) * info.channels, (y * info.width + x) * info.channels + 3)]
+    expect(pixel(36, 550)).toEqual(pixel(61, 550))
+    expect(pixel(12, 550)).toEqual(pixel(61, 550))
+    expect(pixel(785, 550)).toEqual(pixel(761, 550))
+    expect(pixel(809, 550)).toEqual(pixel(761, 550))
+    expect(pixel(400, 36)).toEqual(pixel(400, 72))
+    expect(pixel(400, 12)).toEqual(pixel(400, 72))
+    expect(pixel(400, 1085)).toEqual(pixel(400, 1049))
+    expect(pixel(400, 1109)).toEqual(pixel(400, 1049))
+  })
+
+  it('fills the PDF trim with the full source and stretches its edge into bleed', async () => {
+    const folder = await mkdtemp(join(tmpdir(), 'mtg-pdf-edge-'))
+    const source = Buffer.from(`<svg width="745" height="1040" xmlns="http://www.w3.org/2000/svg"><rect width="745" height="1040" fill="#203040"/><rect width="745" height="15" fill="#ee4422"/><rect x="0" y="0" width="15" height="1040" fill="#33dd55"/></svg>`)
+    const result = await new SharpArtworkPipeline(folder).createPdfDerivative('mtg', 'full-face', new Uint8Array(source), 1.5)
+    const { data, info } = await sharp(result.filePath).raw().toBuffer({ resolveWithObject: true })
+    const pixel = (x: number, y: number) => [...data.subarray((y * info.width + x) * info.channels, (y * info.width + x) * info.channels + 3)]
+    expect([result.width, result.height]).toEqual([786, 1086])
+    expect(result.sourceRect).toEqual({ x: 36, y: 36, width: 750, height: 1050 })
+    expect(pixel(0, 500)).toEqual(pixel(18, 500))
+    expect(pixel(400, 0)).toEqual(pixel(400, 18))
+    expect(pixel(18, 500)[1]).toBeGreaterThan(150)
+    expect(pixel(400, 18)[0]).toBeGreaterThan(150)
   })
 })
 
@@ -133,7 +173,7 @@ describe('PDF export', () => {
     expect(height).toBeCloseTo(792, 0)
   })
 
-  it('renders crop marks as a visible preview-only difference', async () => {
+  it('renders sheet guides and black gutters as immediate preview differences', async () => {
     const folder = await mkdtemp(join(tmpdir(), 'rb-preview-'))
     const image = new Uint8Array(await sharp({ create: { width: 744, height: 1038, channels: 4, background: { r: 30, g: 80, b: 120, alpha: 0.85 } } }).png().toBuffer())
     const pipeline = new SharpArtworkPipeline(folder)
@@ -142,9 +182,15 @@ describe('PDF export', () => {
     const withoutMarks = { ...withMarks, printSettings: { ...withMarks.printSettings, cropMarks: false } }
     const first = await exporter.renderPreview({ manifest: withMarks, pageIndex: 0, customAssets: { front: image, back: image } })
     const second = await exporter.renderPreview({ manifest: withoutMarks, pageIndex: 0, customAssets: { front: image, back: image } })
+    const redGuides = await exporter.renderPreview({ manifest: { ...withMarks, printSettings: { ...withMarks.printSettings, cornerGuideColor: '#ff2222' } }, pageIndex: 0, customAssets: { front: image, back: image } })
+    const insideGuides = await exporter.renderPreview({ manifest: { ...withMarks, printSettings: { ...withMarks.printSettings, cornerGuidePlacement: 'inside', cornerGuideSizeMm: 5 } }, pageIndex: 0, customAssets: { front: image, back: image } })
+    const whiteGutters = await exporter.renderPreview({ manifest: { ...withMarks, printSettings: { ...withMarks.printSettings, blackGutters: false } }, pageIndex: 0, customAssets: { front: image, back: image } })
     expect(Buffer.compare(Buffer.from(first.png), Buffer.from(second.png))).not.toBe(0)
+    expect(Buffer.compare(Buffer.from(first.png), Buffer.from(redGuides.png))).not.toBe(0)
+    expect(Buffer.compare(Buffer.from(first.png), Buffer.from(insideGuides.png))).not.toBe(0)
+    expect(Buffer.compare(Buffer.from(first.png), Buffer.from(whiteGutters.png))).not.toBe(0)
     expect(first).toMatchObject({ pageIndex: 0, columns: 3, rows: 3 })
-  })
+  }, 20_000)
 })
 
 describe('shared print layout', () => {
@@ -156,15 +202,38 @@ describe('shared print layout', () => {
     expect(largerBleed.warnings[0]).toContain('3×2')
   })
 
-  it('keeps crop lines outside their artwork bleed rectangle', () => {
+  it('runs black cut lines to the page edge without crossing artwork', () => {
     const layout = createPrintLayout(1, { ...DEFAULT_PRINT_SETTINGS, cropMarks: true })
-    const slot = layout.pages[0]!.slots[0]!
-    for (const line of slot.cropLines) {
+    const page = layout.pages[0]!
+    const slot = page.slots[0]!
+    expect(page.cutLines.some((line) => line.y1 === 0 || line.y2 === layout.pageHeightMm)).toBe(true)
+    expect(page.cutLines.some((line) => line.x1 === 0 || line.x2 === layout.pageWidthMm)).toBe(true)
+    for (const line of page.cutLines) {
       const midpoint = { x: (line.x1 + line.x2) / 2, y: (line.y1 + line.y2) / 2 }
-      const inside = midpoint.x >= slot.bleedRect.x && midpoint.x <= slot.bleedRect.x + slot.bleedRect.width
-        && midpoint.y >= slot.bleedRect.y && midpoint.y <= slot.bleedRect.y + slot.bleedRect.height
+      const inside = midpoint.x > slot.bleedRect.x && midpoint.x < slot.bleedRect.x + slot.bleedRect.width
+        && midpoint.y > slot.bleedRect.y && midpoint.y < slot.bleedRect.y + slot.bleedRect.height
       expect(inside).toBe(false)
     }
+  })
+
+  it('moves and resizes colored corner guides on both sides of trim', () => {
+    const outside = createPrintLayout(1, { ...DEFAULT_PRINT_SETTINGS, cornerGuideSizeMm: 3, cornerGuidePlacement: 'outside' }).pages[0]!.slots[0]!
+    const inside = createPrintLayout(1, { ...DEFAULT_PRINT_SETTINGS, cornerGuideSizeMm: 5, cornerGuidePlacement: 'inside' }).pages[0]!.slots[0]!
+    expect(outside.guideLines).toHaveLength(8)
+    expect(outside.guideLines[0]!.y1).toBeLessThan(outside.trimRect.y)
+    expect(inside.guideLines[0]!.y1).toBeGreaterThan(inside.trimRect.y)
+    expect(Math.abs(outside.guideLines[0]!.x2 - outside.guideLines[0]!.x1)).toBe(3)
+    expect(Math.abs(inside.guideLines[0]!.x2 - inside.guideLines[0]!.x1)).toBe(5)
+  })
+
+  it('mirrors duplex backs and keeps guides attached to each card', () => {
+    const layout = createPrintLayout(4, { ...DEFAULT_PRINT_SETTINGS, mode: 'duplex' })
+    const front = layout.pages[0]!
+    const back = layout.pages[1]!
+    expect(front.slots.map((slot) => slot.column)).toEqual([0, 1, 2, 0])
+    expect(back.slots.map((slot) => slot.column)).toEqual([2, 1, 0, 2])
+    expect(back.slots.every((slot) => slot.guideLines.length === 8)).toBe(true)
+    expect(back.cutLines.length).toBeGreaterThan(0)
   })
 })
 

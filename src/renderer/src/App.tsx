@@ -896,7 +896,9 @@ function ReviewPanel(props: {
   const [pageIndex, setPageIndex] = useState(0)
   const [preview, setPreview] = useState<(Omit<PrintPreviewResult, 'png'> & { url: string }) | null>(null)
   const [proofAllocationId, setProofAllocationId] = useState(proofOptions[0]?.allocation.id ?? '')
-  const [proof, setProof] = useState<{ url: string; label: string; proof: MpcPlacementProof } | null>(null)
+  const [proofView, setProofView] = useState<'cut' | 'upload'>('cut')
+  const [proof, setProof] = useState<{ uploadUrl: string; cutUrl: string; label: string; proof: MpcPlacementProof } | null>(null)
+  const [proofError, setProofError] = useState<string | null>(null)
   const [previewBusy, setPreviewBusy] = useState(true)
   const [previewError, setPreviewError] = useState<string | null>(null)
 
@@ -929,15 +931,19 @@ function ReviewPanel(props: {
     const option = proofOptions.find((candidate) => candidate.allocation.id === proofAllocationId)
     if (!option) return
     let disposed = false
-    let objectUrl: string | undefined
+    let uploadUrl: string | undefined
+    let cutUrl: string | undefined
+    setProof(null)
+    setProofError(null)
     void window.riftboundStudio.renderMpcProof({ manifest, customAssets: props.document.customAssets, deckId: option.deck.id, entryId: option.entry.id, allocationId: option.allocation.id })
       .then((result) => {
         if (disposed) return
-        objectUrl = URL.createObjectURL(new Blob([new Uint8Array(result.png).buffer as ArrayBuffer], { type: 'image/png' }))
-        setProof({ url: objectUrl, label: result.label, proof: result.proof })
+        uploadUrl = URL.createObjectURL(new Blob([new Uint8Array(result.png).buffer as ArrayBuffer], { type: 'image/png' }))
+        cutUrl = URL.createObjectURL(new Blob([new Uint8Array(result.cutPng).buffer as ArrayBuffer], { type: 'image/png' }))
+        setProof({ uploadUrl, cutUrl, label: result.label, proof: result.proof })
       })
-      .catch((reason) => { if (!disposed) setPreviewError(formatError(reason)) })
-    return () => { disposed = true; if (objectUrl) URL.revokeObjectURL(objectUrl) }
+      .catch((reason) => { if (!disposed) setProofError(formatError(reason)) })
+    return () => { disposed = true; if (uploadUrl) URL.revokeObjectURL(uploadUrl); if (cutUrl) URL.revokeObjectURL(cutUrl) }
   }, [manifest, proofAllocationId, props.document.customAssets])
 
   function updateBleed(bleedMm: number): void {
@@ -987,19 +993,36 @@ function ReviewPanel(props: {
           <label>Print mode<select value={manifest.printSettings.mode} onChange={(event) => { setPageIndex(0); props.onUpdateManifest((value) => ({ ...value, printSettings: { ...value.printSettings, mode: event.target.value as 'fronts' | 'duplex' } })) }}><option value="fronts">Fronts only</option><option value="duplex">Duplex fronts + backs</option></select></label>
           <label>Bleed <span className="bleed-value"><strong>{manifest.printSettings.bleedMm.toFixed(1)} mm</strong><input aria-label="Bleed in millimeters" type="number" min="0" max="2" step="0.1" value={manifest.printSettings.bleedMm} onChange={(event) => updateBleed(Number(event.target.value))} /></span><input type="range" min="0" max="2" step="0.1" value={manifest.printSettings.bleedMm} onChange={(event) => updateBleed(Number(event.target.value))} /></label>
           <div className="bleed-presets">{[0, 1, 1.5, 2].map((value) => <button type="button" className={manifest.printSettings.bleedMm === value ? 'active' : ''} key={value} onClick={() => updateBleed(value)}>{value.toFixed(1)}</button>)}</div>
-          <label className="checkbox"><input type="checkbox" checked={manifest.printSettings.cropMarks} onChange={(event) => props.onUpdateManifest((value) => ({ ...value, printSettings: { ...value.printSettings, cropMarks: event.target.checked } }))} />Vector crop marks</label>
+          <div className="settings-divider" />
+          <h3>Sheet guides</h3>
+          <label className="checkbox"><input type="checkbox" checked={manifest.printSettings.cornerGuides} onChange={(event) => props.onUpdateManifest((value) => ({ ...value, printSettings: { ...value.printSettings, cornerGuides: event.target.checked } }))} />Colored corner guides</label>
+          <label>Guide size <span className="guide-setting-value">{manifest.printSettings.cornerGuideSizeMm.toFixed(1)} mm</span><input aria-label="Corner guide size" type="range" min="1" max="8" step="0.5" disabled={!manifest.printSettings.cornerGuides} value={manifest.printSettings.cornerGuideSizeMm} onChange={(event) => props.onUpdateManifest((value) => ({ ...value, printSettings: { ...value.printSettings, cornerGuideSizeMm: Number(event.target.value) } }))} /></label>
+          <label className="guide-color-label">Guide color <span className="guide-color-control"><input aria-label="Corner guide color" type="color" disabled={!manifest.printSettings.cornerGuides} value={manifest.printSettings.cornerGuideColor} onChange={(event) => props.onUpdateManifest((value) => ({ ...value, printSettings: { ...value.printSettings, cornerGuideColor: event.target.value } }))} /><code>{manifest.printSettings.cornerGuideColor.toUpperCase()}</code></span></label>
+          <fieldset className="guide-placement" disabled={!manifest.printSettings.cornerGuides}><legend>Guide position</legend><label><input type="radio" name="guide-position" value="outside" checked={manifest.printSettings.cornerGuidePlacement === 'outside'} onChange={() => props.onUpdateManifest((value) => ({ ...value, printSettings: { ...value.printSettings, cornerGuidePlacement: 'outside' } }))} />Outside trim</label><label><input type="radio" name="guide-position" value="inside" checked={manifest.printSettings.cornerGuidePlacement === 'inside'} onChange={() => props.onUpdateManifest((value) => ({ ...value, printSettings: { ...value.printSettings, cornerGuidePlacement: 'inside' } }))} />Inside trim</label></fieldset>
+          <label className="checkbox"><input type="checkbox" checked={manifest.printSettings.cropMarks} onChange={(event) => props.onUpdateManifest((value) => ({ ...value, printSettings: { ...value.printSettings, cropMarks: event.target.checked } }))} />Black cut lines to page edge</label>
+          <label className="checkbox"><input type="checkbox" checked={manifest.printSettings.blackGutters} onChange={(event) => props.onUpdateManifest((value) => ({ ...value, printSettings: { ...value.printSettings, blackGutters: event.target.checked } }))} />Black gutters between cards</label>
+          <p className="print-guide-note">Outside guides stay off the card face; inside guides print on the card corners. Cut lines cross margins and gutters, never the artwork.</p>
           <div className="spec-list"><div><span>Card trim</span><b>{gameProfile.cardWidthMm} × {gameProfile.cardHeightMm} mm</b></div><div><span>MPC upload</span><b>{gameProfile.mpcCanvasWidthPx} × {gameProfile.mpcCanvasHeightPx} px</b></div><div><span>MPC stock</span><b>{manifest.mpcSettings.stock} · non-foil</b></div></div>
         </div>
       </div>
       <div className="mpc-proof-section">
-        <div className="mpc-proof-copy"><div className="eyebrow">MPC placement proof</div><h2>The complete card face stays protected inside trim.</h2><p>The full source reaches the dashed safe limit vertically. Only a bounded strip of decorative border may extend past it horizontally, while the softened opaque underlay fills the cut bleed. No source pixels are cropped to manufacture bleed.</p>
+        <div className="mpc-proof-copy"><div className="eyebrow">MPC placement proof</div><h2>Inspect the card after the cut.</h2><p>The finished-size view removes the outer 36 px bleed from every side of the exact MPC upload. The full cut area now has a crisp edge-derived border; soft blur starts only beyond a 24 px guard outside the cut. Open the upload view to check that the name, mana cost, rules, and bottom details sit inside the dashed safe-area guide.</p>
           <label>Proof artwork group<select value={proofAllocationId} onChange={(event) => setProofAllocationId(event.target.value)}>{proofOptions.map(({ deck, entry, allocation }, index) => <option value={allocation.id} key={allocation.id}>{deck.title} · {entry.rawName} · Artwork {index + 1} ×{allocation.quantity}</option>)}</select></label>
-          {proof && <div className={`proof-status ${proof.proof.placementVerified ? 'good' : 'bad'}`}><strong>{proof.proof.placementVerified ? 'Maximum safe-fit derivative verified' : 'Derivative failed verification'}</strong><span>{proof.proof.width}×{proof.proof.height} px · source {proof.proof.sourceRect.width}×{proof.proof.sourceRect.height} px · {sourceHorizontalOverscan(proof.proof)} px side extension · {proof.proof.transparentPixels} transparent pixels</span></div>}
+          {proof && <div className={`proof-status ${proof.proof.placementVerified ? 'good' : 'bad'}`}><strong>{proof.proof.placementVerified ? 'Image size, opacity, and placement verified' : 'Derivative failed verification'}</strong><span>{proof.proof.width}×{proof.proof.height} px upload · {proof.proof.trimRect.width}×{proof.proof.trimRect.height} px cut · sharp source covers {Math.round(proof.proof.sourceRect.width / proof.proof.trimRect.width * 100)}% of cut width and {Math.round(proof.proof.sourceRect.height / proof.proof.trimRect.height * 100)}% of cut height</span></div>}
+          {proofError && <div className="message error">{proofError}</div>}
+          <p className="proof-caution">The app verifies image geometry, not the position of each card’s text. Check unusual frames in the upload view before ordering; MPC may round corners or vary the physical cut.</p>
         </div>
-        <div className="mpc-proof-frame" style={{ aspectRatio: `${gameProfile.mpcCanvasWidthPx} / ${gameProfile.mpcCanvasHeightPx}` }}>
-          {proof?.url && <img src={proof.url} alt={`${proof.label} MPC bleed proof`} />}
-          {proof && <><div className="trim-guide" style={proofGuideStyle(proof.proof.trimRect, proof.proof)}><span>Cut / trim</span></div>
-          <div className="safe-guide" style={proofGuideStyle(proof.proof.safeRect, proof.proof)}><span>Safe area</span></div></>}
+        <div className="mpc-proof-display">
+          <div className="mpc-proof-toggle" role="group" aria-label="MPC proof view">
+            <button type="button" aria-pressed={proofView === 'cut'} className={proofView === 'cut' ? 'active' : ''} onClick={() => setProofView('cut')}>After trim</button>
+            <button type="button" aria-pressed={proofView === 'upload'} className={proofView === 'upload' ? 'active' : ''} onClick={() => setProofView('upload')}>Upload + guides</button>
+          </div>
+          <div className={`mpc-proof-frame ${proofView}`} style={{ aspectRatio: proofView === 'cut' ? `${gameProfile.trimWidthPx} / ${gameProfile.trimHeightPx}` : `${gameProfile.mpcCanvasWidthPx} / ${gameProfile.mpcCanvasHeightPx}` }}>
+            {proof && <img src={proofView === 'cut' ? proof.cutUrl : proof.uploadUrl} alt={`${proof.label} ${proofView === 'cut' ? 'after removing the 36 px MPC bleed' : 'full MPC upload with cut and safe-area guides'}`} />}
+            {proof && proofView === 'upload' && <><div className="trim-guide" style={proofGuideStyle(proof.proof.trimRect, proof.proof)}><span>Cut / trim</span></div>
+              <div className="safe-guide" style={proofGuideStyle(proof.proof.safeRect, proof.proof)}><span>Safe area</span></div></>}
+          </div>
+          <span className="mpc-proof-caption">{proofView === 'cut' ? 'Exact rectangular cut crop · 36 px removed on every side' : `Full ${gameProfile.mpcCanvasWidthPx}×${gameProfile.mpcCanvasHeightPx} upload · yellow cut line · dashed safe-area line`}</span>
         </div>
       </div>
       <div className="panel-actions"><span>Duplex backs are mirrored by column for physical alignment.</span><button className="button primary" onClick={props.onContinue}>Choose an output</button></div>
@@ -1024,7 +1047,7 @@ function ExportPanel(props: {
       <div className="eyebrow">Step 5</div><h1>Make the deck physical</h1><p className="lede">Save a portable project, create cut-ready sheets, or let the app place every image into a new MPC project.</p>
       <button className="output-card" onClick={props.onSave}><span className="output-icon">◆</span><div><strong>Save portable project</strong><small>Manifest, settings, and custom artwork in one .proxyproject file</small></div><b>Save</b></button>
       {props.unresolved > 0 && <div className="message warning">Resolve {props.unresolved} remaining {props.unresolved === 1 ? 'entry' : 'entries'} across the project before creating combined output.</div>}
-      <button className="output-card" disabled={props.busy || props.unresolved > 0} onClick={props.onPdf}><span className="output-icon">▦</span><div><strong>Export print-ready PDF</strong><small>{props.document.manifest.printSettings.pageSize.toUpperCase()} · {props.document.manifest.printSettings.mode} · crop marks</small></div><b>Export</b></button>
+      <button className="output-card" disabled={props.busy || props.unresolved > 0} onClick={props.onPdf}><span className="output-icon">▦</span><div><strong>Export print-ready PDF</strong><small>{props.document.manifest.printSettings.pageSize.toUpperCase()} · {props.document.manifest.printSettings.mode} · {props.document.manifest.printSettings.cornerGuides ? 'corner guides' : 'no corner guides'} · {props.document.manifest.printSettings.cropMarks ? 'cut lines' : 'no cut lines'}</small></div><b>Export</b></button>
       <button className="output-card featured" disabled={props.busy || props.unresolved > 0} onClick={props.onMpc}><span className="output-icon">↗</span><div><strong>Send to MakePlayingCards</strong><small>{props.totalCards} cards from {props.document.manifest.decks.length} {props.document.manifest.decks.length === 1 ? 'deck' : 'decks'} · {props.document.manifest.mpcSettings.stock} · stops at review</small></div><b>Start</b></button>
       {props.progress && <div className={`progress-card ${props.progress.stage}`}><div><strong>{props.progress.stage.replaceAll('-', ' ')}</strong><span>{props.progress.message}</span></div><div className="progress-track"><i style={{ width: `${pct}%` }} /></div>{props.busy && <button onClick={props.onCancel}>Cancel automation</button>}</div>}
       <div className="checkout-note"><strong>Checkout is always manual.</strong> The app never enters payment details or confirms a purchase.</div>
@@ -1133,13 +1156,6 @@ function touch(document: ProjectDocument): ProjectDocument {
 }
 
 function unique<T>(values: T[]): T[] { return [...new Set(values)] }
-function sourceHorizontalOverscan(proof: MpcPlacementProof): number {
-  return Math.max(
-    0,
-    proof.safeRect.x - proof.sourceRect.x,
-    proof.sourceRect.x + proof.sourceRect.width - (proof.safeRect.x + proof.safeRect.width)
-  )
-}
 function proofGuideStyle(rect: MpcPlacementProof['trimRect'], proof: Pick<MpcPlacementProof, 'width' | 'height'>) {
   return {
     left: `${(rect.x / proof.width) * 100}%`,

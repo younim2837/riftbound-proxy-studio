@@ -59,7 +59,7 @@ export function installDevPreviewApi(): void {
     renderMpcProof: async (request: Parameters<RendererApi['renderMpcProof']>[0]) => {
       const profile = GAME_PROFILES[request.manifest.game]
       return {
-        png: pngBytes(), deckId: request.deckId ?? 'preview-deck', entryId: request.entryId ?? 'preview-entry', allocationId: request.allocationId ?? 'preview-allocation', label: 'Browser proof',
+        png: pngBytes(), cutPng: pngBytes(), deckId: request.deckId ?? 'preview-deck', entryId: request.entryId ?? 'preview-entry', allocationId: request.allocationId ?? 'preview-allocation', label: 'Browser proof',
         proof: {
           width: profile.mpcCanvasWidthPx, height: profile.mpcCanvasHeightPx, opaque: true, transparentPixels: 0, bleedPx: 36 as const,
           trimRect: { x: 36, y: 36, width: profile.trimWidthPx, height: profile.trimHeightPx },

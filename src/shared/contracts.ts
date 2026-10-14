@@ -16,6 +16,7 @@ export type DeckSection =
   | 'other'
 export type PageSize = 'letter' | 'a4'
 export type PrintMode = 'fronts' | 'duplex'
+export type GuidePlacement = 'inside' | 'outside'
 export type CardFace = 'front' | 'back'
 export type ImageQuality = 'highres' | 'fallback' | 'missing'
 export const MPC_STOCK_CODES = ['S30', 'S33', 'A35'] as const
@@ -167,6 +168,11 @@ export interface PrintSettings {
   mode: PrintMode
   bleedMm: number
   cropMarks: boolean
+  cornerGuides: boolean
+  cornerGuideColor: string
+  cornerGuideSizeMm: number
+  cornerGuidePlacement: GuidePlacement
+  blackGutters: boolean
   dpi: 300
   cardWidthMm: number
   cardHeightMm: number
@@ -249,7 +255,7 @@ export interface PrintLayoutSlot {
   column: number
   bleedRect: PrintRect
   trimRect: PrintRect
-  cropLines: PrintLine[]
+  guideLines: PrintLine[]
 }
 
 export interface PrintLayoutPage {
@@ -257,6 +263,8 @@ export interface PrintLayoutPage {
   sheetIndex: number
   side: 'front' | 'back'
   slots: PrintLayoutSlot[]
+  gridRect: PrintRect | null
+  cutLines: PrintLine[]
 }
 
 export interface PrintLayout {
@@ -312,6 +320,7 @@ export interface MpcProofRequest {
 
 export interface MpcProofResult {
   png: Uint8Array
+  cutPng: Uint8Array
   deckId: string
   entryId: string
   allocationId: string
@@ -387,6 +396,11 @@ export const DEFAULT_PRINT_SETTINGS: PrintSettings = {
   mode: 'fronts',
   bleedMm: 1.5,
   cropMarks: true,
+  cornerGuides: true,
+  cornerGuideColor: '#21c934',
+  cornerGuideSizeMm: 3,
+  cornerGuidePlacement: 'outside',
+  blackGutters: true,
   dpi: 300,
   cardWidthMm: 63,
   cardHeightMm: 88

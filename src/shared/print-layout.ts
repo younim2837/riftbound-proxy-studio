@@ -1,4 +1,4 @@
-import type { PrintLayout, PrintLayoutPage, PrintLayoutSlot, PrintLine, PrintSettings } from './contracts.js'
+import type { PrintLayout, PrintLayoutPage, PrintLayoutSlot, PrintLine, PrintRect, PrintSettings } from './contracts.js'
 
 export const PRINT_PAGE_MM = {
   letter: { width: 215.9, height: 279.4 },
@@ -7,8 +7,9 @@ export const PRINT_PAGE_MM = {
 
 export const PRINT_GAP_MM = 2
 export const PRINT_MIN_MARGIN_MM = 1.2
-const CROP_MARK_OFFSET_MM = 0.15
-const CROP_MARK_LENGTH_MM = 0.8
+const PRINT_RECOMMENDED_MARGIN_MM = 3
+const GUIDE_OFFSET_MM = 0.35
+const EPSILON = 0.0001
 
 export function createPrintLayout(cardCount: number, settings: PrintSettings): PrintLayout {
   const page = PRINT_PAGE_MM[settings.pageSize]
@@ -22,6 +23,11 @@ export function createPrintLayout(cardCount: number, settings: PrintSettings): P
   const sheetCount = Math.ceil(cardCount / cardsPerSheet)
   const warnings: string[] = []
   if (columns < 3 || rows < 3) warnings.push(`The selected ${settings.bleedMm.toFixed(1)} mm bleed produces a ${columns}×${rows} grid.`)
+  const marginX = (page.width - columns * cellWidth - (columns - 1) * PRINT_GAP_MM) / 2
+  const marginY = (page.height - rows * cellHeight - (rows - 1) * PRINT_GAP_MM) / 2
+  if (Math.min(marginX, marginY) < PRINT_RECOMMENDED_MARGIN_MM) {
+    warnings.push('This grid leaves less than 3 mm at a page edge. Office printers may clip edge-reaching cut lines; use borderless printing or a smaller grid.')
+  }
   const pages: PrintLayoutPage[] = []
 
   for (let sheetIndex = 0; sheetIndex < sheetCount; sheetIndex++) {
@@ -83,33 +89,71 @@ function buildPage(
       column,
       bleedRect,
       trimRect,
-      cropLines: settings.cropMarks ? cropLinesFor(bleedRect, trimRect) : []
+      guideLines: settings.cornerGuides ? cornerGuideLines(trimRect, settings.cornerGuideSizeMm, settings.cornerGuidePlacement) : []
     })
   }
-  return { index, sheetIndex, side, slots }
+  return {
+    index,
+    sheetIndex,
+    side,
+    slots,
+    gridRect: boundingRect(slots.map((slot) => slot.bleedRect)),
+    cutLines: settings.cropMarks ? fullPageCutLines(slots, page) : []
+  }
 }
 
-function cropLinesFor(bleed: PrintLayoutSlot['bleedRect'], trim: PrintLayoutSlot['trimRect']): PrintLine[] {
-  const left = bleed.x
-  const right = bleed.x + bleed.width
-  const top = bleed.y
-  const bottom = bleed.y + bleed.height
-  const before = (edge: number): [number, number] => [edge - CROP_MARK_OFFSET_MM - CROP_MARK_LENGTH_MM, edge - CROP_MARK_OFFSET_MM]
-  const after = (edge: number): [number, number] => [edge + CROP_MARK_OFFSET_MM, edge + CROP_MARK_OFFSET_MM + CROP_MARK_LENGTH_MM]
-  const [topStart, topEnd] = before(top)
-  const [bottomStart, bottomEnd] = after(bottom)
-  const [leftStart, leftEnd] = before(left)
-  const [rightStart, rightEnd] = after(right)
-  const trimRight = trim.x + trim.width
-  const trimBottom = trim.y + trim.height
-  return [
-    { x1: trim.x, y1: topStart, x2: trim.x, y2: topEnd },
-    { x1: trimRight, y1: topStart, x2: trimRight, y2: topEnd },
-    { x1: trim.x, y1: bottomStart, x2: trim.x, y2: bottomEnd },
-    { x1: trimRight, y1: bottomStart, x2: trimRight, y2: bottomEnd },
-    { x1: leftStart, y1: trim.y, x2: leftEnd, y2: trim.y },
-    { x1: leftStart, y1: trimBottom, x2: leftEnd, y2: trimBottom },
-    { x1: rightStart, y1: trim.y, x2: rightEnd, y2: trim.y },
-    { x1: rightStart, y1: trimBottom, x2: rightEnd, y2: trimBottom }
+function cornerGuideLines(trim: PrintRect, size: number, placement: PrintSettings['cornerGuidePlacement']): PrintLine[] {
+  const left = trim.x
+  const right = trim.x + trim.width
+  const top = trim.y
+  const bottom = trim.y + trim.height
+  const offset = placement === 'inside' ? GUIDE_OFFSET_MM : -GUIDE_OFFSET_MM
+  const corners = [
+    { x: left + offset, y: top + offset, dx: 1, dy: 1 },
+    { x: right - offset, y: top + offset, dx: -1, dy: 1 },
+    { x: left + offset, y: bottom - offset, dx: 1, dy: -1 },
+    { x: right - offset, y: bottom - offset, dx: -1, dy: -1 }
   ]
+  return corners.flatMap(({ x, y, dx, dy }) => [
+    { x1: x, y1: y, x2: x + dx * size, y2: y },
+    { x1: x, y1: y, x2: x, y2: y + dy * size }
+  ])
+}
+
+function boundingRect(rects: PrintRect[]): PrintRect | null {
+  if (rects.length === 0) return null
+  const left = Math.min(...rects.map((rect) => rect.x))
+  const top = Math.min(...rects.map((rect) => rect.y))
+  const right = Math.max(...rects.map((rect) => rect.x + rect.width))
+  const bottom = Math.max(...rects.map((rect) => rect.y + rect.height))
+  return { x: left, y: top, width: right - left, height: bottom - top }
+}
+
+function fullPageCutLines(slots: PrintLayoutSlot[], page: { width: number; height: number }): PrintLine[] {
+  const xPositions = uniquePositions(slots.flatMap((slot) => [slot.trimRect.x, slot.trimRect.x + slot.trimRect.width]))
+  const yPositions = uniquePositions(slots.flatMap((slot) => [slot.trimRect.y, slot.trimRect.y + slot.trimRect.height]))
+  const vertical = xPositions.flatMap((x) => openSegments(page.height, slots
+    .filter((slot) => x >= slot.bleedRect.x - EPSILON && x <= slot.bleedRect.x + slot.bleedRect.width + EPSILON)
+    .map((slot) => [slot.bleedRect.y, slot.bleedRect.y + slot.bleedRect.height] as const))
+    .map(([start, end]) => ({ x1: x, y1: start, x2: x, y2: end })))
+  const horizontal = yPositions.flatMap((y) => openSegments(page.width, slots
+    .filter((slot) => y >= slot.bleedRect.y - EPSILON && y <= slot.bleedRect.y + slot.bleedRect.height + EPSILON)
+    .map((slot) => [slot.bleedRect.x, slot.bleedRect.x + slot.bleedRect.width] as const))
+    .map(([start, end]) => ({ x1: start, y1: y, x2: end, y2: y })))
+  return [...vertical, ...horizontal]
+}
+
+function uniquePositions(values: number[]): number[] {
+  return [...new Set(values.map((value) => Math.round(value * 1000) / 1000))].sort((a, b) => a - b)
+}
+
+function openSegments(limit: number, occupied: readonly (readonly [number, number])[]): [number, number][] {
+  const segments: [number, number][] = []
+  let cursor = 0
+  for (const [start, end] of [...occupied].sort((a, b) => a[0] - b[0])) {
+    if (start > cursor + EPSILON) segments.push([cursor, start])
+    cursor = Math.max(cursor, end)
+  }
+  if (cursor < limit - EPSILON) segments.push([cursor, limit])
+  return segments
 }

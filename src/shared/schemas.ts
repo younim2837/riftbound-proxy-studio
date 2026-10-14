@@ -86,6 +86,11 @@ const printSettingsSchema = z.object({
   mode: z.enum(['fronts', 'duplex']),
   bleedMm: z.number().min(0).max(2),
   cropMarks: z.boolean(),
+  cornerGuides: z.boolean().default(true),
+  cornerGuideColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#21c934'),
+  cornerGuideSizeMm: z.number().min(1).max(8).default(3),
+  cornerGuidePlacement: z.enum(['inside', 'outside']).default('outside'),
+  blackGutters: z.boolean().default(true),
   dpi: z.literal(300),
   cardWidthMm: z.number().positive(),
   cardHeightMm: z.number().positive()

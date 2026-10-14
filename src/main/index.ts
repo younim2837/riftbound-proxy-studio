@@ -173,6 +173,7 @@ function registerIpc(cacheDirectory: string): void {
     const proof = await pipeline.createMpcPlacementProof(request.manifest.game, derivative)
     return {
       png: new Uint8Array(await readFile(derivative.filePath)),
+      cutPng: await pipeline.createMpcCutPreview(request.manifest.game, derivative),
       deckId: selected.deck.id,
       entryId: selected.entry.id,
       allocationId: allocation.id,

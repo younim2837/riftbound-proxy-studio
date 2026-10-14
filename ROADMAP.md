@@ -1,5 +1,19 @@
 # Proxy Studio roadmap
 
+## Completed in 0.3.4
+
+- Adjustable colored corner guides with 1–8 mm size and inside/outside trim placement.
+- Black cutting lines through margins and gutters to page edges, clipped away from artwork.
+- Optional black gutters, shared PDF/preview drawing instructions, and tight printer-margin warnings.
+- Full-face PDF derivatives with edge-stretched bleed independent of MPC placement.
+- Backward-compatible sheet settings for existing schema 3 projects.
+
+## Completed in 0.3.3
+
+- Crisp MPC edge extension across the cut rectangle and a 24 px guard, with blur restricted to outer bleed.
+- After trim proof cropped from the exact processed upload, plus the full upload view with cut/safe-area guides.
+- Pixel-level regression coverage for crisp cut edges and exact cut-preview placement.
+
 ## Completed in 0.3.2
 
 - Project-level MPC card-stock choice with S30, S33, and A35 options in Review.
@@ -20,7 +34,7 @@
 - Scryfall-backed Magic import, batched resolution, cached search, lazy printing selection, and high-resolution PNG artwork.
 - Arena/MTGO/common-text parsing with Commander, Companion, Sideboard, Maybeboard, Tokens, set codes, and collector numbers.
 - Automatic transform/MDFC reverse-face back assignments with per-artwork overrides.
-- Exact Magic 822×1122 MPC derivatives with 36 px bleed, opaque softened edge treatment, protected full-source placement, and proof metadata.
+- Exact Magic 822×1122 MPC derivatives with 36 px bleed, opaque edge treatment, protected full-source placement, and proof metadata.
 - Game-aware PDF trim sizes, MPC product navigation, default proxy backs, project branding, and schema 3 migration from schema 1/2.
 - Development-only browser preview harness plus automated and live-gated Scryfall image tests.
 

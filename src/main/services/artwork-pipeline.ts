@@ -14,8 +14,8 @@ import {
 } from '../../shared/contracts.js'
 import { assertAllowedHttpsUrl } from '../../shared/schemas.js'
 
-const EDGE_UNDERLAY_INSET_PX = 24
-const DERIVATIVE_PROFILE_VERSION = 'v7-multigame-protected-edge-underlay'
+const MPC_CRISP_CUT_GUARD_PX = 24
+const DERIVATIVE_PROFILE_VERSION = 'v9-full-face-pdf-edge-bleed'
 const OFFICIAL_ART_HOSTS = ['cmsassets.rgpub.io', 'cards.scryfall.io'] as const
 
 export class SharpArtworkPipeline implements ArtworkPipeline {
@@ -63,7 +63,9 @@ export class SharpArtworkPipeline implements ArtworkPipeline {
     const shouldRotate = landscape ?? metadata.width > metadata.height
     const orientedWidth = shouldRotate ? metadata.height : metadata.width
     const orientedHeight = shouldRotate ? metadata.width : metadata.height
-    const sourceRect = calculateMpcSourceRect(cardProfile, orientedWidth, orientedHeight)
+    const sourceRect = outputProfile === 'mpc'
+      ? calculateMpcSourceRect(cardProfile, orientedWidth, orientedHeight)
+      : trimRectFor(cardProfile)
     const existing = await readDerivative(filePath, sourceId)
     if (existing) return { ...existing, sourceRect }
 
@@ -71,35 +73,50 @@ export class SharpArtworkPipeline implements ArtworkPipeline {
     let normalized = sharp(bytes, { failOn: 'error', limitInputPixels: 150_000_000 })
     if (shouldRotate) normalized = normalized.rotate(90)
     const orientedSource = await normalized.png().toBuffer()
-    const underlay = await createTrimUnderlay(orientedSource, cardProfile)
-    const face = await sharp(orientedSource)
-      .resize(sourceRect.width, sourceRect.height, { fit: 'fill', kernel: sharp.kernel.lanczos3 })
-      .png()
-      .toBuffer()
-
     let image: Sharp
     if (outputProfile === 'mpc') {
-      const canvasUnderlay = await sharp(underlay)
-        .resize(cardProfile.mpcCanvasWidthPx, cardProfile.mpcCanvasHeightPx, { fit: 'fill', kernel: sharp.kernel.lanczos3 })
-        .blur(18)
+      const face = await sharp(orientedSource)
+        .resize(sourceRect.width, sourceRect.height, { fit: 'fill', kernel: sharp.kernel.lanczos3 })
+        .png()
+        .toBuffer()
+      const trimRect = trimRectFor(cardProfile)
+      const crispTrim = await sharp(face)
         .flatten({ background: '#000000' })
         .removeAlpha()
+        .extend({
+          left: sourceRect.x - trimRect.x,
+          top: sourceRect.y - trimRect.y,
+          right: trimRect.x + trimRect.width - sourceRect.x - sourceRect.width,
+          bottom: trimRect.y + trimRect.height - sourceRect.y - sourceRect.height,
+          extendWith: 'copy'
+        })
+        .png()
+        .toBuffer()
+      const canvasUnderlay = await sharp(crispTrim)
+        .extend({
+          left: cardProfile.mpcBleedPx,
+          top: cardProfile.mpcBleedPx,
+          right: cardProfile.mpcBleedPx,
+          bottom: cardProfile.mpcBleedPx,
+          extendWith: 'copy'
+        })
+        .blur(18)
+        .png()
+        .toBuffer()
+      const guard = Math.min(MPC_CRISP_CUT_GUARD_PX, cardProfile.mpcBleedPx)
+      const crispCutAndGuard = await sharp(crispTrim)
+        .extend({ left: guard, top: guard, right: guard, bottom: guard, extendWith: 'copy' })
         .png()
         .toBuffer()
       image = sharp(canvasUnderlay).composite([{
-        input: face,
-        left: sourceRect.x,
-        top: sourceRect.y,
+        input: crispCutAndGuard,
+        left: cardProfile.mpcBleedPx - guard,
+        top: cardProfile.mpcBleedPx - guard,
         blend: 'over'
       }])
     } else {
-      const trim = await sharp(underlay)
-        .composite([{
-          input: face,
-          left: sourceRect.x - cardProfile.mpcBleedPx,
-          top: sourceRect.y - cardProfile.mpcBleedPx,
-          blend: 'over'
-        }])
+      const trim = await sharp(orientedSource)
+        .resize(cardProfile.trimWidthPx, cardProfile.trimHeightPx, { fit: 'fill', kernel: sharp.kernel.lanczos3 })
         .flatten({ background: '#000000' })
         .removeAlpha()
         .png()
@@ -144,6 +161,14 @@ export class SharpArtworkPipeline implements ArtworkPipeline {
       ]
     }
   }
+
+  async createMpcCutPreview(game: GameId, derivative: ImageDerivative): Promise<Uint8Array> {
+    const trim = trimRectFor(GAME_PROFILES[game])
+    return new Uint8Array(await sharp(derivative.filePath)
+      .extract({ left: trim.x, top: trim.y, width: trim.width, height: trim.height })
+      .png()
+      .toBuffer())
+  }
 }
 
 export class ArtworkSourceResolver {
@@ -179,24 +204,6 @@ export class ArtworkSourceResolver {
     await writeFile(path, bytes)
     return { sourceId, bytes }
   }
-}
-
-async function createTrimUnderlay(source: Buffer, profile: GameProfile): Promise<Buffer> {
-  const normalized = await sharp(source)
-    .resize(profile.trimWidthPx, profile.trimHeightPx, { fit: 'fill', kernel: sharp.kernel.lanczos3 })
-    .flatten({ background: '#000000' })
-    .removeAlpha()
-    .png()
-    .toBuffer()
-  const inset = Math.min(EDGE_UNDERLAY_INSET_PX, Math.floor(profile.trimWidthPx / 4), Math.floor(profile.trimHeightPx / 4))
-  return sharp(normalized)
-    .extract({ left: inset, top: inset, width: profile.trimWidthPx - inset * 2, height: profile.trimHeightPx - inset * 2 })
-    .resize(profile.trimWidthPx, profile.trimHeightPx, { fit: 'fill', kernel: sharp.kernel.lanczos3 })
-    .blur(12)
-    .flatten({ background: '#000000' })
-    .removeAlpha()
-    .png()
-    .toBuffer()
 }
 
 async function readDerivative(filePath: string, sourceId: string): Promise<ImageDerivative | null> {

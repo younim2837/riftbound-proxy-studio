@@ -6,8 +6,10 @@ import type {
   PdfExportRequest,
   PdfExportResult,
   PrintLayoutPage,
+  PrintLine,
   PrintPreviewRequest,
   PrintPreviewResult,
+  PrintSettings,
   ProjectManifest
 } from '../../shared/contracts.js'
 import { createPrintLayout } from '../../shared/print-layout.js'
@@ -42,6 +44,16 @@ export class PrintPdfExporter implements PdfExporter {
 
     for (const layoutPage of layout.pages) {
       const page = pdf.addPage([mm(layout.pageWidthMm), mm(layout.pageHeightMm)])
+      if (manifest.printSettings.blackGutters && layoutPage.gridRect) {
+        const rect = layoutPage.gridRect
+        page.drawRectangle({
+          x: mm(rect.x),
+          y: mm(layout.pageHeightMm - rect.y - rect.height),
+          width: mm(rect.width),
+          height: mm(rect.height),
+          color: rgb(0, 0, 0)
+        })
+      }
       for (const layoutSlot of layoutPage.slots) {
         const slot = slots[layoutSlot.sourceIndex]
         if (!slot) continue
@@ -61,7 +73,7 @@ export class PrintPdfExporter implements PdfExporter {
           height: mm(rect.height)
         })
       }
-      drawCropLines(page, layoutPage, layout.pageHeightMm)
+      drawSheetGuides(page, layoutPage, layout.pageHeightMm, manifest.printSettings)
     }
 
     const bytes = await pdf.save({ useObjectStreams: false })
@@ -87,6 +99,10 @@ export class PrintPdfExporter implements PdfExporter {
     const width = px(layout.pageWidthMm)
     const height = px(layout.pageHeightMm)
     const composites: OverlayOptions[] = []
+    if (manifest.printSettings.blackGutters && layoutPage.gridRect) {
+      const rect = layoutPage.gridRect
+      composites.push({ input: Buffer.from(`<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg"><rect x="${pxFloat(rect.x)}" y="${pxFloat(rect.y)}" width="${pxFloat(rect.width)}" height="${pxFloat(rect.height)}" fill="#000000"/></svg>`) })
+    }
 
     for (const layoutSlot of layoutPage.slots) {
       const slot = slots[layoutSlot.sourceIndex]
@@ -102,8 +118,8 @@ export class PrintPdfExporter implements PdfExporter {
       composites.push({ input, left: px(rect.x), top: px(rect.y) })
     }
 
-    if (manifest.printSettings.cropMarks) {
-      composites.push({ input: Buffer.from(cropMarkSvg(layoutPage, width, height)) })
+    if (layoutPage.cutLines.length > 0 || layoutPage.slots.some((slot) => slot.guideLines.length > 0)) {
+      composites.push({ input: Buffer.from(sheetGuidesSvg(layoutPage, width, height, manifest.printSettings)) })
     }
     const png = await sharp({ create: { width, height, channels: 3, background: '#ffffff' } })
       .composite(composites)
@@ -151,25 +167,40 @@ function selectionFor(slot: CardSlot, side: 'front' | 'back'): ArtworkSelection 
   return side === 'back' ? slot.back : slot.front
 }
 
-function drawCropLines(page: PDFPage, layoutPage: PrintLayoutPage, pageHeightMm: number): void {
-  const color = rgb(0.18, 0.21, 0.24)
+function drawSheetGuides(page: PDFPage, layoutPage: PrintLayoutPage, pageHeightMm: number, settings: PrintSettings): void {
+  const guideColor = hexColor(settings.cornerGuideColor)
+  for (const line of layoutPage.cutLines) {
+    page.drawLine({
+      start: { x: mm(line.x1), y: mm(pageHeightMm - line.y1) },
+      end: { x: mm(line.x2), y: mm(pageHeightMm - line.y2) },
+      thickness: mm(0.18),
+      color: rgb(0, 0, 0)
+    })
+  }
   for (const slot of layoutPage.slots) {
-    for (const line of slot.cropLines) {
+    for (const line of slot.guideLines) {
       page.drawLine({
         start: { x: mm(line.x1), y: mm(pageHeightMm - line.y1) },
         end: { x: mm(line.x2), y: mm(pageHeightMm - line.y2) },
-        thickness: 0.45,
-        color
+        thickness: mm(0.3),
+        color: guideColor
       })
     }
   }
 }
 
-function cropMarkSvg(layoutPage: PrintLayoutPage, width: number, height: number): string {
-  const lines = layoutPage.slots.flatMap((slot) => slot.cropLines).map((line) =>
+function sheetGuidesSvg(layoutPage: PrintLayoutPage, width: number, height: number, settings: PrintSettings): string {
+  const cutLines = layoutPage.cutLines.map((line) =>
     `<line x1="${pxFloat(line.x1)}" y1="${pxFloat(line.y1)}" x2="${pxFloat(line.x2)}" y2="${pxFloat(line.y2)}"/>`
   ).join('')
-  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="#30363d" stroke-width="1.4">${lines}</g></svg>`
+  const guides = layoutPage.slots.flatMap((slot) => slot.guideLines).map((line: PrintLine) =>
+    `<line x1="${pxFloat(line.x1)}" y1="${pxFloat(line.y1)}" x2="${pxFloat(line.x2)}" y2="${pxFloat(line.y2)}"/>`
+  ).join('')
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="#000000" stroke-width="${pxFloat(0.18)}">${cutLines}</g><g fill="none" stroke="${settings.cornerGuideColor}" stroke-width="${pxFloat(0.3)}">${guides}</g></svg>`
+}
+
+function hexColor(hex: string) {
+  return rgb(parseInt(hex.slice(1, 3), 16) / 255, parseInt(hex.slice(3, 5), 16) / 255, parseInt(hex.slice(5, 7), 16) / 255)
 }
 
 function mm(value: number): number {

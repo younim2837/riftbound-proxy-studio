@@ -7,14 +7,28 @@ A Windows desktop application for importing Riftbound or Magic: The Gathering de
 1. Choose Riftbound or Magic, then import one or more compatible deck lists into a project. Riftbound also supports Piltover Archive URLs and deck codes; Magic supports common Arena, MTGO, Moxfield, Archidekt, and Commander text formats.
 2. Navigate each named deck and resolve ambiguous or missing cards against the development catalog.
 3. Split repeated cards into artwork groups, then compare official printings in a large visual gallery, choose custom fronts, assign a shared proxy-marked back, or add per-group back overrides.
-4. Configure Letter/A4, fronts-only/duplex, 0–2 mm bleed, and crop marks.
+4. Configure Letter/A4, fronts-only/duplex, 0–2 mm bleed, colored corner guides, full-page cutting lines, and black gutters. Preview every sheet before exporting.
 5. Save `.proxyproject` (or open an existing `.rbproxy`), export PDF, or start MPC automation.
 
 MPC automation selects the live quantity bracket and the project's chosen S30, S33, or A35 stock from the page, uploads unique images, assigns slots, and stops at review. It never enters payment information or confirms an order.
 
 ## Download
 
-Version 0.3.2 Windows installer and portable builds are available as a [GitHub prerelease](https://github.com/younim2837/riftbound-proxy-studio/releases/tag/v0.3.2). This build includes Magic support, the artwork gallery, and stock selection. The live MPC editor and final-review checks listed in [ROADMAP.md](ROADMAP.md) remain open before a stable 0.3 release.
+Version 0.3.4 Windows installer, portable executable, and portable ZIP are available as a [GitHub preview release](https://github.com/younim2837/riftbound-proxy-studio/releases/tag/v0.3.4). This build includes Magic support, the artwork gallery, stock selection, corrected MPC edge treatment, and configurable PDF sheet guides. The live MPC editor and final-review checks listed in [ROADMAP.md](ROADMAP.md) remain open before a stable 0.3 release.
+
+## 0.3.4 print-sheet guides
+
+- Letter and A4 sheets can show adjustable colored corner guides. Choose their color, 1–8 mm arm length, and placement just inside or outside each card's trim line. Inside guides intentionally print on the card corners.
+- Optional black cut lines run from trim positions to the page edges through margins and gutters, without crossing artwork. Ordinary printers may clip lines near a page edge; use a borderless-capable printer or adjust the sheet layout when warned.
+- Optional black fill covers the occupied sheet grid behind cards, including the spaces between them. The PDF and on-screen page preview use the same layout and drawing order.
+- PDF artwork now keeps the full card face at trim size and extends its edge pixels only into the selected 0–2 mm bleed. This is separate from MPC's fixed upload bleed and does not change MPC images.
+- These options apply equally to Riftbound and Magic, and older project files receive safe defaults when opened.
+
+## 0.3.3 MPC border and cut preview corrections
+
+- A crisp edge-derived border fills the entire cut rectangle and extends 24 px into the sacrificial bleed. Soft blur remains outside that guard, preventing a blurred rim from appearing at the intended cut.
+- Review offers an After trim view cropped from the exact processed upload and an Upload + guides view showing the cut and safe-area boundaries.
+- The full source remains protected inside trim. Geometry verification checks dimensions, opacity, and source placement; unusual frames still need visual inspection of their text and symbols.
 
 ## 0.3.2 selectable MPC card stock
 
@@ -37,7 +51,7 @@ Version 0.3.2 Windows installer and portable builds are available as a [GitHub p
 - Magic imports resolve card identity and printings through Scryfall. The provider batches deck resolution, throttles live requests, caches metadata and images locally, supports catalog search, and lazily loads alternate printings.
 - Scryfall PNGs are preferred. Transform and modal double-faced cards automatically assign the reverse Scryfall face as that artwork group's physical back, which can still be overridden.
 - Magic uses MPC Traditional Poker geometry: 63.5×88.9 mm trim, 822×1122 px upload canvas, 750×1050 px cut rectangle at `(36,36)`, 36 px sacrificial bleed, and a further 36 px internal safe guide.
-- The complete source is proportionally protected inside trim. An opaque reflected/softened edge underlay fills the remaining trim and bleed without cropping the source or producing transparent white corners.
+- For MPC uploads, the complete source is proportionally protected inside trim. An opaque crisp edge extension fills the remaining trim and a 24 px cut guard; softened edges fill the outermost bleed without cropping the source or producing transparent white corners. PDF sheets use separate edge-extended derivatives.
 - Project schema 3 stores the selected game. Schema 1 and 2 projects migrate automatically to Riftbound. New `.proxyproject` files and existing `.rbproxy` files are both supported.
 
 ## 0.2.0 combined projects and per-copy artwork
@@ -59,9 +73,9 @@ Version 0.3.2 Windows installer and portable builds are available as a [GitHub p
 
 - MPC fronts and backs are generated on the official 816×1110 px canvas. Standard Riftbound artwork is proportionally scaled to 692×966 at `(62, 72)`, using the complete vertical span of MPC's safe rectangle.
 - The full source is preserved. Its decorative border extends only 10 px past each horizontal safe guide and remains well inside the trim boundary; the bottom credits and side symbols stay inside the safe guide on verified Riot artwork.
-- A softened, edge-derived opaque underlay fills the area around the original face, including the 744×1038 trim rectangle at `(36, 36)` and the outer 36 px sacrificial bleed.
+- Edge-derived opaque artwork fills the area around the original face, including the 744×1038 trim rectangle at `(36, 36)` and the outer 36 px sacrificial bleed. Version 0.3.3 keeps the full cut area and a 24 px guard crisp.
 - Every MPC image is rejected before upload unless it is exactly 816×1110, fully opaque, vertically inside the safe area, horizontally overscanned by no more than 12 px, and fully inside trim.
-- PDF preview and export now consume the same page-layout model, including all pages, duplex column mirroring, partial sheets, selected 0–2 mm bleed, gutters, and vector crop marks outside the artwork.
+- PDF preview and export consume the same page-layout model, including all pages, duplex column mirroring, partial sheets, and selected 0–2 mm bleed. Version 0.3.4 adds configurable corner guides, page-edge cut lines, and black gutters.
 - Resolve uses a searchable keyboard-accessible printing picker and shows a larger artwork preview on hover or focus. Selecting a plausible card identity is sufficient because artwork can still be changed in Customize.
 - MPC automation saves editor and final-review proof screenshots and halts if it detects a placement or resolution warning. Checkout remains strictly manual.
 

@@ -44,6 +44,29 @@ describe('portable project files', () => {
     expect(() => projectManifestSchema.parse(unsupported)).toThrow()
   })
 
+  it('opens existing v3 projects with default sheet-guide settings', () => {
+    const current = makeDocument().manifest
+    const { cornerGuides: _cornerGuides, cornerGuideColor: _cornerGuideColor, cornerGuideSizeMm: _cornerGuideSizeMm,
+      cornerGuidePlacement: _cornerGuidePlacement, blackGutters: _blackGutters, ...oldPrintSettings } = current.printSettings
+    const opened = migrateProjectManifest({ ...current, printSettings: oldPrintSettings })
+    expect(opened.printSettings).toMatchObject({
+      cornerGuides: true,
+      cornerGuideColor: '#21c934',
+      cornerGuideSizeMm: 3,
+      cornerGuidePlacement: 'outside',
+      blackGutters: true
+    })
+  })
+
+  it('rejects malformed sheet-guide colors and sizes', () => {
+    const manifest = makeDocument().manifest
+    manifest.printSettings.cornerGuideColor = 'red; stroke: blue'
+    expect(() => projectManifestSchema.parse(manifest)).toThrow()
+    manifest.printSettings.cornerGuideColor = '#ff2233'
+    manifest.printSettings.cornerGuideSizeMm = 20
+    expect(() => projectManifestSchema.parse(manifest)).toThrow()
+  })
+
   it('migrates a v1 single-deck project into one deck and one artwork group', () => {
     const now = new Date().toISOString()
     const migrated = migrateProjectManifest({
