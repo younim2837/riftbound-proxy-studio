@@ -1,6 +1,6 @@
 {
   "name": "riftbound-proxy-studio",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "private": true,
   "description": "A desktop studio for preparing Riftbound and Magic playtest projects for PDF and MakePlayingCards.",
   "main": "./out/main/index.js",
@@ -10,6 +10,7 @@
     "build": "npm run typecheck && electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
+    "test:ui:artwork": "esbuild scripts/verify-artwork-gallery.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/verify-artwork-gallery.mjs && node dist/verify-artwork-gallery.mjs",
     "test:live:scryfall": "set RUN_SCRYFALL_LIVE=1&& vitest run tests/scryfall-live.test.ts",
     "verify:mpc:black-border": "esbuild scripts/verify-mpc-black-border.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/verify-mpc-black-border.mjs && node dist/verify-mpc-black-border.mjs",
     "test:watch": "vitest",

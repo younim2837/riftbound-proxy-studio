@@ -14,7 +14,16 @@ MPC automation selects the live quantity bracket and the project's chosen S30, S
 
 ## Download
 
-Version 0.3.6 Windows installer, portable executable, and portable ZIP are available as a [GitHub preview release](https://github.com/younim2837/riftbound-proxy-studio/releases/tag/v0.3.6). Use 0.3.6 for new Magic MPC projects: earlier versions either generate colored surrounds or shrink the card inside an oversized border. Physical results from the full-scale build remain to be confirmed.
+Version 0.3.7 Windows installer, portable executable, and portable ZIP are available as a [GitHub preview release](https://github.com/younim2837/riftbound-proxy-studio/releases/tag/v0.3.7). Use 0.3.7 for the artwork-gallery confirmation fix and the full-scale Magic MPC treatment introduced in 0.3.6. Earlier versions either generate colored surrounds or shrink the card inside an oversized border.
+
+On October 25, 2026, the project owner reported that the follow-up physical MPC sampler had good borders and card scale, similar to a real Magic card, with some remaining image softness. This is positive physical feedback for that sample, not a guarantee of identical results across every image, stock, finish, or manufacturing run. The 0.3.7 gallery fix does not alter the sampled image-processing geometry.
+
+## 0.3.7 artwork confirmation fix
+
+- The artwork gallery now has an always-visible confirmation bar outside the scrolling images and details. Its height adapts to the available window, including shorter windows and display scaling.
+- Click or keyboard-focus a printing to select it, then choose **Use this artwork**. Hovering only previews another image; it cannot change the printing waiting for confirmation. The bar names the selected printing and copy count.
+- Search no longer silently replaces your selected printing. Cancel and Escape leave the artwork group unchanged.
+- `npm run test:ui:artwork` exercises the actual renderer in installed headless Chrome using the offline development catalog: three window sizes, mouse/keyboard confirmation, hover/search stability, split-copy isolation, Cancel/Escape, and loading/error banners. MPC/PDF image processing remains unchanged from 0.3.6.
 
 ## 0.3.6 full-scale Magic faces
 

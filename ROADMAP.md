@@ -1,12 +1,20 @@
 # Proxy Studio roadmap
 
+## Completed in 0.3.7
+
+- Always-visible artwork confirmation/cancel bar outside both scrolling panels.
+- Window-height-aware gallery layout without the overflowing fixed minimum height.
+- Separate transient hover previews from the printing selected for confirmation; retain the choice across search filters.
+- Repeatable real-renderer Chrome regression checks for small windows, both games, mouse/keyboard, split-copy isolation, cancellation, and loading/error states.
+- No changes to MPC/PDF derivative geometry or project files.
+
 ## Completed in 0.3.6
 
 - Fit the complete Magic face to physical trim at original proportions, removing safe-guide-based shrinkage and the wide generated surround.
 - Add black bleed outside trim and retain only minimal aspect-ratio padding for standard Scryfall images.
 - Source face / After trim / Upload + guides comparisons and accurate distinction between nominal trim preservation and physical safe-area risk.
 - Full-scale pixel regression tests, cache invalidation, and live MPC editor/review checks for four real printings.
-- Physical sampler verification for this full-scale replacement remains pending.
+- The project owner reported successful follow-up physical MPC samples on October 25, 2026: borders and scale looked similar to real Magic cards, with some remaining image softness. This validates the reported sample, not every manufacturing run or source image.
 
 ## Completed in 0.3.5 (superseded for Magic scaling)
 

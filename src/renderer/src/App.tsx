@@ -796,6 +796,7 @@ function ArtworkBrowserDialog(props: {
   const candidates = useMemo(() => artworkCandidates(props.catalog, props.seed), [props.catalog, props.seed])
   const [query, setQuery] = useState('')
   const [focusedId, setFocusedId] = useState(currentCardId ?? props.seed.id)
+  const [hoveredId, setHoveredId] = useState<string | null>(null)
   const filtered = useMemo(() => {
     const needle = normalizeSearch(query)
     if (!needle) return candidates
@@ -810,7 +811,10 @@ function ArtworkBrowserDialog(props: {
       ...(card.treatments ?? [])
     ].filter(Boolean).join(' ')).includes(needle))
   }, [candidates, query])
-  const focused = filtered.find((card) => card.id === focusedId) ?? filtered[0]
+  // Browsing/searching must not silently replace the printing awaiting confirmation.
+  const chosen = candidates.find((card) => card.id === focusedId)
+  const focused = filtered.find((card) => card.id === hoveredId)
+    ?? filtered.find((card) => card.id === focusedId) ?? filtered[0]
 
   useEffect(() => {
     function closeOnEscape(event: KeyboardEvent): void {
@@ -821,14 +825,16 @@ function ArtworkBrowserDialog(props: {
   }, [props.onClose])
 
   useEffect(() => {
-    if (!filtered.some((card) => card.id === focusedId) && filtered[0]) setFocusedId(filtered[0].id)
-  }, [filtered, focusedId])
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = previousOverflow }
+  }, [])
 
   return (
     <div className="artwork-browser-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) props.onClose() }}>
       <section className="artwork-browser-dialog" role="dialog" aria-modal="true" aria-labelledby="artwork-browser-title">
         <header className="artwork-browser-header">
-          <div><div className="eyebrow">Artwork gallery · {props.allocation.quantity} {props.allocation.quantity === 1 ? 'copy' : 'copies'}</div><h2 id="artwork-browser-title">Choose your favorite {props.seed.name} artwork</h2><p>{props.game === 'mtg' ? 'Every available Scryfall printing is shown visually. ' : ''}Selecting one changes only this artwork group.</p></div>
+          <div><div className="eyebrow">Artwork gallery · {props.allocation.quantity} {props.allocation.quantity === 1 ? 'copy' : 'copies'}</div><h2 id="artwork-browser-title">Choose your favorite {props.seed.name} artwork</h2><p>{props.game === 'mtg' ? 'Every available Scryfall printing is shown visually. ' : ''}Click a printing, then use the button below to apply it to this artwork group.</p></div>
           <button type="button" className="artwork-browser-close" aria-label="Close artwork gallery" onClick={props.onClose}>×</button>
         </header>
         <div className="artwork-browser-toolbar">
@@ -841,16 +847,17 @@ function ArtworkBrowserDialog(props: {
           <div className="artwork-gallery" aria-label="Available artwork printings">
             {filtered.map((card) => {
               const selected = card.id === currentCardId
-              const active = card.id === focused?.id
+              const active = card.id === chosen?.id
               return (
                 <button
                   type="button"
                   className={`artwork-tile ${selected ? 'selected' : ''} ${active ? 'focused' : ''}`}
                   key={card.id}
                   aria-pressed={active}
-                  onClick={() => setFocusedId(card.id)}
-                  onFocus={() => setFocusedId(card.id)}
-                  onMouseEnter={() => setFocusedId(card.id)}
+                  onClick={() => { setFocusedId(card.id); setHoveredId(null) }}
+                  onFocus={() => { setFocusedId(card.id); setHoveredId(null) }}
+                  onMouseEnter={() => setHoveredId(card.id)}
+                  onMouseLeave={() => setHoveredId(null)}
                 >
                   <span className="artwork-tile-image"><img loading="lazy" src={card.imageUrl} alt={`${card.name}, ${card.setName} artwork`} />{selected && <b>Current</b>}{card.imageQuality === 'fallback' && <em>Lower resolution</em>}</span>
                   <span className="artwork-tile-copy"><strong>{card.setName}</strong><small>{formatPrintingCaption(card)}</small></span>
@@ -871,11 +878,18 @@ function ArtworkBrowserDialog(props: {
                     {!!focused.treatments?.length && <><dt>Treatments</dt><dd>{focused.treatments.map(formatTreatment).join(' · ')}</dd></>}
                   </dl>
                   {focused.imageQuality === 'fallback' && <div className="artwork-quality-warning">This printing uses a lower-resolution source and may look softer in print.</div>}
-                  <button type="button" className="button primary large" onClick={() => props.onChoose(focused)}>{focused.id === currentCardId ? 'Keep this artwork' : 'Use this artwork'}</button>
                 </div>
               </>
             ) : <div className="artwork-gallery-empty">Choose an artwork to see it larger.</div>}
           </aside>
+        </div>
+        <div className="artwork-browser-actions">
+          <div className="artwork-browser-selection" aria-live="polite">
+            <strong>{chosen ? `${chosen.setName} · #${chosen.collectorNumber}` : 'Click an artwork to select it'}</strong>
+            <span>{chosen ? `Selected for ${props.allocation.quantity} ${props.allocation.quantity === 1 ? 'copy' : 'copies'} · ${chosen.code}` : 'Hover to preview; click or keyboard-focus to choose.'}</span>
+          </div>
+          <button type="button" className="button ghost" onClick={props.onClose}>Cancel</button>
+          <button type="button" className="button primary large" disabled={!chosen} onClick={() => { if (chosen) props.onChoose(chosen) }}>{chosen?.id === currentCardId ? 'Keep this artwork' : 'Use this artwork'}</button>
         </div>
       </section>
     </div>
