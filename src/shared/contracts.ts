@@ -213,6 +213,10 @@ export interface CatalogSnapshot {
   fetchedAt: string
   game: GameId
   developmentOnly: boolean
+  catalogVersion?: number
+  cacheStatus?: 'live' | 'cached' | 'offline' | 'bundled'
+  checkedAt?: string
+  warning?: string
 }
 
 export interface ResolvedImport {
@@ -310,6 +314,8 @@ export interface MpcPlacementProof {
   borderTreatment: 'solid-black' | 'edge-extended'
   blackBorderVerified: boolean | null
   nonBlackBorderPixels: number | null
+  edgeBleedVerified?: boolean | null
+  nonEdgeBleedPixels?: number | null
   warnings: string[]
 }
 

@@ -12,7 +12,7 @@ export function installDevPreviewApi(): void {
   if (window.riftboundStudio || !import.meta.env.DEV || !new URLSearchParams(location.search).has('browserPreview')) return
   let game: GameId = 'riftbound'
   const api = {
-    getAppInfo: async () => ({ version: '0.3.2-preview', platform: 'browser', cacheDirectory: 'preview' }),
+    getAppInfo: async () => ({ version: '0.4.2-preview', platform: 'browser', cacheDirectory: 'preview' }),
     loadCatalog: async (selected: GameId) => {
       game = selected
       return { cards: previewCards(selected), source: 'browser preview', fetchedAt: new Date().toISOString(), game: selected, developmentOnly: true }
@@ -64,11 +64,13 @@ export function installDevPreviewApi(): void {
           width: profile.mpcCanvasWidthPx, height: profile.mpcCanvasHeightPx, opaque: true, transparentPixels: 0, bleedPx: 36 as const,
           trimRect: { x: 36, y: 36, width: profile.trimWidthPx, height: profile.trimHeightPx },
           safeRect: { x: 72, y: 72, width: profile.trimWidthPx - 72, height: profile.trimHeightPx - 72 },
-          sourceRect: request.manifest.game === 'mtg' ? { x: 36, y: 36, width: 750, height: 1050 } : { x: 61, y: 72, width: profile.trimWidthPx - 49, height: profile.trimHeightPx - 72 },
+          sourceRect: request.manifest.game === 'mtg' ? { x: 36, y: 36, width: 750, height: 1050 } : { x: 36, y: 36, width: 743, height: 1038 },
           sourcePreserved: true, sourceContainedInSafeArea: false, placementVerified: true,
           borderTreatment: request.manifest.game === 'mtg' ? 'solid-black' : 'edge-extended',
           blackBorderVerified: request.manifest.game === 'mtg' ? true : null,
-          nonBlackBorderPixels: request.manifest.game === 'mtg' ? 0 : null, warnings: []
+          nonBlackBorderPixels: request.manifest.game === 'mtg' ? 0 : null,
+          edgeBleedVerified: request.manifest.game === 'riftbound' ? true : null,
+          nonEdgeBleedPixels: request.manifest.game === 'riftbound' ? 0 : null, warnings: []
         }
       }
     },

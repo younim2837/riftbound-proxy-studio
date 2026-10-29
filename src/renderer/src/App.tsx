@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   ArtworkSelection,
   ArtworkAllocation,
   CardRecord,
+  CatalogSnapshot,
   DeckEntry,
   GameId,
   ImportResult,
   MpcAutomationEvent,
-  MpcPlacementProof,
   MpcStock,
   PrintPreviewResult,
   ProjectDocument,
@@ -24,14 +24,15 @@ import {
   defaultPrintSettings
 } from '../../shared/contracts'
 
-const STEPS = ['Import', 'Resolve', 'Customize', 'Review', 'Export'] as const
+const SHARED_STEPS = ['Import', 'Resolve', 'Customize', 'Output'] as const
 const MPC_STOCK_OPTIONS: Array<{ id: MpcStock; title: string; detail: string }> = [
   { id: 'S30', title: 'Professional standard', detail: 'Blue core · smooth finish' },
   { id: 'S33', title: 'Superior smooth', detail: 'Black core · smooth finish' },
   { id: 'A35', title: 'Thick standard', detail: 'The existing Proxy Studio default' }
 ]
 installDevPreviewApi()
-type Step = (typeof STEPS)[number]
+type OutputMode = 'mpc' | 'print'
+type Step = (typeof SHARED_STEPS)[number] | 'MPC' | 'Print setup'
 type ImportMode = 'text' | 'piltover' | 'code'
 
 const SAMPLE_DECK = `Legend:
@@ -56,8 +57,13 @@ Deck
 export default function App() {
   const [game, setGame] = useState<GameId>('riftbound')
   const [step, setStep] = useState<Step>('Import')
+  const [outputMode, setOutputMode] = useState<OutputMode | null>(null)
   const [catalog, setCatalog] = useState<CardRecord[]>([])
-  const [catalogSource, setCatalogSource] = useState('Loading development catalog…')
+  const [catalogSource, setCatalogSource] = useState('Loading Riot gallery catalog…')
+  const [catalogSnapshot, setCatalogSnapshot] = useState<CatalogSnapshot | null>(null)
+  const [catalogLoading, setCatalogLoading] = useState(false)
+  const [catalogWarning, setCatalogWarning] = useState<string | null>(null)
+  const catalogRequest = useRef(0)
   const [document, setDocument] = useState<ProjectDocument | null>(null)
   const [importMode, setImportMode] = useState<ImportMode>('text')
   const [importValue, setImportValue] = useState(SAMPLE_DECK)
@@ -70,16 +76,9 @@ export default function App() {
 
   useEffect(() => {
     setCatalog([])
-    setCatalogSource(game === 'mtg' ? 'Loading cached Scryfall cards…' : 'Loading development catalog…')
-    void window.riftboundStudio
-      .loadCatalog(game)
-      .then((snapshot) => {
-        setCatalog(snapshot.cards)
-        setCatalogSource(game === 'mtg'
-          ? `${snapshot.cards.length.toLocaleString()} cached Scryfall cards · live lookup enabled`
-          : `${snapshot.cards.length.toLocaleString()} cards · development fixture`)
-      })
-      .catch((reason) => setError(formatError(reason)))
+    setCatalogSnapshot(null)
+    void refreshCatalog()
+    return () => { catalogRequest.current++ }
   }, [game])
 
   useEffect(() => window.riftboundStudio.onMpcProgress(setProgress), [])
@@ -88,6 +87,7 @@ export default function App() {
   const totalCards = useMemo(() => manifest ? projectCardCount(manifest) : 0, [manifest])
   const unresolved = manifest ? unresolvedEntryCount(manifest) : 0
   const activeDeck = manifest?.decks.find((deck) => deck.id === activeDeckId) ?? manifest?.decks[0]
+  const steps: Step[] = [...SHARED_STEPS, ...(outputMode ? [outputMode === 'mpc' ? 'MPC' as const : 'Print setup' as const] : [])]
 
   useEffect(() => {
     if (manifest && !manifest.decks.some((deck) => deck.id === activeDeckId)) {
@@ -156,6 +156,7 @@ export default function App() {
       setDocument(opened)
       setGame(opened.manifest.game)
       setActiveDeckId(opened.manifest.decks[0]?.id ?? '')
+      setOutputMode(null)
       setStep('Resolve')
       setNotice(`Opened ${opened.manifest.title}`)
     } catch (reason) {
@@ -187,6 +188,29 @@ export default function App() {
 
   function mergeCatalog(cards: CardRecord[]): void {
     setCatalog((current) => [...new Map([...current, ...cards].map((card) => [card.id, card])).values()])
+  }
+
+  async function refreshCatalog(forceRefresh = false): Promise<void> {
+    const request = ++catalogRequest.current
+    setCatalogLoading(true)
+    setCatalogWarning(null)
+    setCatalogSource(game === 'mtg' ? 'Loading cached Scryfall cards…' : 'Checking Riot gallery catalog…')
+    try {
+      const snapshot = await window.riftboundStudio.loadCatalog(game, forceRefresh)
+      if (request !== catalogRequest.current) return
+      mergeCatalog(snapshot.cards)
+      setCatalogSnapshot(snapshot)
+      setCatalogWarning(snapshot.warning ?? null)
+      setCatalogSource(game === 'mtg'
+        ? `${snapshot.cards.length.toLocaleString()} cached Scryfall cards · live lookup enabled`
+        : `${snapshot.cards.length.toLocaleString()} Riftbound printings · ${snapshot.cacheStatus === 'bundled' || snapshot.cacheStatus === 'offline' ? 'offline fallback' : snapshot.cacheStatus === 'cached' ? 'cached gallery' : 'Riot gallery'}`)
+    } catch (reason) {
+      if (request !== catalogRequest.current) return
+      setCatalogWarning(`Could not refresh the catalog: ${formatError(reason)}`)
+      setCatalogSource('Catalog refresh unavailable')
+    } finally {
+      if (request === catalogRequest.current) setCatalogLoading(false)
+    }
   }
 
   async function searchCatalog(query: string): Promise<CardRecord[]> {
@@ -333,6 +357,17 @@ export default function App() {
     setWarnings([])
   }
 
+  function chooseOutput(mode: OutputMode): void {
+    clearMessages()
+    setOutputMode(mode)
+    setStep(mode === 'mpc' ? 'MPC' : 'Print setup')
+  }
+
+  function changeOutput(): void {
+    clearMessages()
+    setStep('Output')
+  }
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -343,30 +378,40 @@ export default function App() {
         </div>
         <div className="topbar-actions">
           <span className="catalog-status"><i />{catalogSource}</span>
-          <button className="button ghost" onClick={() => void openProject()}>Open project</button>
-          <button className="button ghost" disabled={!document} onClick={() => void saveProject()}>Save</button>
+          <button className="button ghost" disabled={busy} onClick={() => void openProject()}>Open project</button>
+          <button className="button ghost" disabled={!document || busy} onClick={() => void saveProject()}>Save</button>
         </div>
       </header>
 
       <div className="prototype-banner">
         {game === 'mtg'
           ? 'Magic mode uses Scryfall images for personal playtest projects. No images are bundled; public binary distribution requires separate rights review.'
-          : 'Riftbound mode uses development fixtures. Public distribution requires Riot product registration and approved API access.'}
+          : 'Riftbound uses a development adapter for Riot’s public card gallery. Public distribution requires Riot product registration and approved API access.'}
       </div>
+
+      {game === 'riftbound' && <div className={`catalog-info-bar ${catalogWarning ? 'offline' : ''}`}>
+        <div title={catalogSnapshot?.source}>
+          <strong>Riftbound catalog</strong>
+          <span>{catalogSnapshot ? `${catalogSnapshot.cards.length.toLocaleString()} printings · ${new Set(catalogSnapshot.cards.map((card) => card.setCode)).size} sets · Radiance: ${catalogSnapshot.cards.filter((card) => card.setCode === 'RAD').length} · ${catalogSnapshot.cacheStatus === 'bundled' ? 'Bundled snapshot' : 'Last synced'} ${new Date(catalogSnapshot.fetchedAt).toLocaleString()}` : catalogLoading ? 'Checking for the latest cards…' : 'No catalog loaded'}</span>
+          {catalogWarning && <small role="status">{catalogWarning}</small>}
+        </div>
+        <button type="button" className="button ghost" disabled={busy || catalogLoading} onClick={() => void refreshCatalog(true)}>{catalogLoading ? 'Refreshing catalog…' : 'Refresh catalog'}</button>
+      </div>}
 
       <main className="workspace">
         <aside className="stepper" aria-label="Project steps">
           <div className="stepper-label">Project flow</div>
-          {STEPS.map((value, index) => {
+          {steps.map((value, index) => {
             const active = value === step
-            const currentIndex = STEPS.indexOf(step)
-            const enabled = value === 'Import' || Boolean(document)
+            const currentIndex = steps.indexOf(step)
+            const enabled = !busy && (value === 'Import' || Boolean(document))
             return (
               <button
                 key={value}
                 className={`step ${active ? 'active' : ''} ${index < currentIndex ? 'complete' : ''}`}
                 disabled={!enabled}
-                onClick={() => setStep(value)}
+                aria-current={active ? 'step' : undefined}
+                onClick={() => { clearMessages(); setStep(value) }}
               >
                 <span>{index < currentIndex ? '✓' : index + 1}</span>
                 <div><strong>{value}</strong><small>{stepCaption(value)}</small></div>
@@ -430,25 +475,31 @@ export default function App() {
               onChooseArtwork={chooseArtwork}
               onUpdateManifest={updateManifest}
               onLoadPrintings={loadPrintings}
-              onContinue={() => setStep('Review')}
+              onContinue={changeOutput}
             />
           )}
-          {step === 'Review' && document && (
-            <ReviewPanel
+          {step === 'Output' && document && (
+            <OutputChoicePanel document={document} onChoose={chooseOutput} />
+          )}
+          {step === 'Print setup' && document && (
+            <PrintSetupPanel
               document={document}
               onUpdateManifest={updateManifest}
-              onContinue={() => setStep('Export')}
+              busy={busy}
+              unresolved={unresolved}
+              onPdf={() => void exportPdf()}
+              onChangeOutput={changeOutput}
             />
           )}
-          {step === 'Export' && document && (
-            <ExportPanel
+          {step === 'MPC' && document && (
+            <MpcPanel
               document={document}
               totalCards={totalCards}
               unresolved={unresolved}
               busy={busy}
               progress={progress}
-              onSave={() => void saveProject()}
-              onPdf={() => void exportPdf()}
+              onUpdateManifest={updateManifest}
+              onChangeOutput={changeOutput}
               onMpc={() => void startMpc()}
               onCancel={() => void window.riftboundStudio.cancelMpcAutomation()}
             />
@@ -513,7 +564,7 @@ function ImportPanel(props: {
       <h1>{props.adding ? 'Add a deck to this project' : `Bring in a ${GAME_PROFILES[props.game].label} deck`}</h1>
       <p className="lede">{props.game === 'mtg' ? 'Paste an Arena, MTGO, Moxfield, Archidekt, Commander, or plain-text export.' : 'Paste a list, use a Piltover Archive link, or decode a share code.'} {props.adding ? 'It will be appended to the combined PDF and MPC project.' : props.game === 'mtg' ? 'Card metadata and selected artwork are requested from Scryfall.' : 'Nothing is uploaded to our servers.'}</p>
       {!props.adding && <div className="game-picker" role="group" aria-label="Card game">
-        {(['riftbound', 'mtg'] as GameId[]).map((game) => <button type="button" key={game} className={props.game === game ? 'selected' : ''} onClick={() => props.onGame(game)}><strong>{GAME_PROFILES[game].label}</strong><span>{game === 'mtg' ? 'Scryfall · 2.5×3.5 in' : 'Development catalog · 63×88 mm'}</span></button>)}
+        {(['riftbound', 'mtg'] as GameId[]).map((game) => <button type="button" key={game} className={props.game === game ? 'selected' : ''} onClick={() => props.onGame(game)}><strong>{GAME_PROFILES[game].label}</strong><span>{game === 'mtg' ? 'Scryfall · 2.5×3.5 in' : 'Riot gallery · 63×88 mm'}</span></button>)}
       </div>}
       <div className="segmented">
         {(props.game === 'mtg' ? ['text'] as ImportMode[] : ['text', 'piltover', 'code'] as ImportMode[]).map((mode) => (
@@ -736,7 +787,7 @@ function CustomizePanel(props: {
           )
         })}
       </div>
-      <div className="panel-actions"><span>Images are processed only when exported.</span><button className="button primary" onClick={props.onContinue}>Review print setup</button></div>
+      <div className="panel-actions"><span>Artwork and backs apply to either output.</span><button className="button primary" onClick={props.onContinue}>Choose how to make proxies</button></div>
     </div>
     {artworkBrowser && browserEntry && browserAllocation && browserSeed && (
       <ArtworkBrowserDialog
@@ -896,23 +947,40 @@ function ArtworkBrowserDialog(props: {
   )
 }
 
-function ReviewPanel(props: {
+function OutputChoicePanel(props: {
+  document: ProjectDocument
+  onChoose: (mode: OutputMode) => void
+}) {
+  const manifest = props.document.manifest
+  return (
+    <div className="panel narrow output-choice-panel">
+      <div className="eyebrow">Step 4 · Choose an output</div>
+      <h1>How do you want to make your proxies?</h1>
+      <p className="lede">Your project contains {projectCardCount(manifest)} cards across {manifest.decks.length} {manifest.decks.length === 1 ? 'deck' : 'decks'}. Choose professional cards from MakePlayingCards or printable sheets to cut yourself.</p>
+      <button type="button" className="output-card featured" onClick={() => props.onChoose('mpc')}>
+        <span className="output-icon">↗</span><div><strong>MakePlayingCards</strong><small>Choose card stock, then let Proxy Studio populate a new MPC project. No PDF or sheet setup needed.</small></div><b>Set up MPC →</b>
+      </button>
+      <button type="button" className="output-card" onClick={() => props.onChoose('print')}>
+        <span className="output-icon">▦</span><div><strong>Printed proxies / PDF</strong><small>Set up paper size, bleed, cutting guides, and backs. Preview your sheets and export a print-ready PDF.</small></div><b>Set up printing →</b>
+      </button>
+      <p className="output-choice-note">Both paths use the same artwork and quantities. You can switch outputs at any time without losing your settings. Save your project using Save above.</p>
+    </div>
+  )
+}
+
+function PrintSetupPanel(props: {
   document: ProjectDocument
   onUpdateManifest: (update: (value: ProjectManifest) => ProjectManifest) => void
-  onContinue: () => void
+  busy: boolean
+  unresolved: number
+  onPdf: () => void
+  onChangeOutput: () => void
 }) {
   const manifest = props.document.manifest
   const gameProfile = GAME_PROFILES[manifest.game]
   const total = projectCardCount(manifest)
-  const proofOptions = manifest.decks.flatMap((deck) => deck.entries.flatMap((entry) =>
-    entry.allocations.map((allocation) => ({ deck, entry, allocation }))
-  ))
   const [pageIndex, setPageIndex] = useState(0)
   const [preview, setPreview] = useState<(Omit<PrintPreviewResult, 'png'> & { url: string }) | null>(null)
-  const [proofAllocationId, setProofAllocationId] = useState(proofOptions[0]?.allocation.id ?? '')
-  const [proofView, setProofView] = useState<'source' | 'cut' | 'upload'>('cut')
-  const [proof, setProof] = useState<{ sourceUrl: string; sourceWidth: number; sourceHeight: number; uploadUrl: string; cutUrl: string; label: string; proof: MpcPlacementProof } | null>(null)
-  const [proofError, setProofError] = useState<string | null>(null)
   const [previewBusy, setPreviewBusy] = useState(true)
   const [previewError, setPreviewError] = useState<string | null>(null)
 
@@ -935,33 +1003,6 @@ function ReviewPanel(props: {
     return () => { disposed = true; window.clearTimeout(timer); if (objectUrl) URL.revokeObjectURL(objectUrl) }
   }, [manifest, pageIndex, props.document.customAssets])
 
-  useEffect(() => {
-    if (!proofOptions.some((option) => option.allocation.id === proofAllocationId)) {
-      setProofAllocationId(proofOptions[0]?.allocation.id ?? '')
-    }
-  }, [proofAllocationId, proofOptions])
-
-  useEffect(() => {
-    const option = proofOptions.find((candidate) => candidate.allocation.id === proofAllocationId)
-    if (!option) return
-    let disposed = false
-    let uploadUrl: string | undefined
-    let cutUrl: string | undefined
-    let sourceUrl: string | undefined
-    setProof(null)
-    setProofError(null)
-    void window.riftboundStudio.renderMpcProof({ manifest, customAssets: props.document.customAssets, deckId: option.deck.id, entryId: option.entry.id, allocationId: option.allocation.id })
-      .then((result) => {
-        if (disposed) return
-        uploadUrl = URL.createObjectURL(new Blob([new Uint8Array(result.png).buffer as ArrayBuffer], { type: 'image/png' }))
-        cutUrl = URL.createObjectURL(new Blob([new Uint8Array(result.cutPng).buffer as ArrayBuffer], { type: 'image/png' }))
-        sourceUrl = URL.createObjectURL(new Blob([new Uint8Array(result.sourcePng).buffer as ArrayBuffer], { type: 'image/png' }))
-        setProof({ sourceUrl, sourceWidth: result.sourceWidth, sourceHeight: result.sourceHeight, uploadUrl, cutUrl, label: result.label, proof: result.proof })
-      })
-      .catch((reason) => { if (!disposed) setProofError(formatError(reason)) })
-    return () => { disposed = true; if (uploadUrl) URL.revokeObjectURL(uploadUrl); if (cutUrl) URL.revokeObjectURL(cutUrl); if (sourceUrl) URL.revokeObjectURL(sourceUrl) }
-  }, [manifest, proofAllocationId, props.document.customAssets])
-
   function updateBleed(bleedMm: number): void {
     const normalized = Math.min(2, Math.max(0, Math.round(bleedMm * 10) / 10))
     setPageIndex(0)
@@ -970,7 +1011,8 @@ function ReviewPanel(props: {
 
   return (
     <div className="panel">
-      <div className="panel-heading"><div><div className="eyebrow">Step 4</div><h1>Review the physical output</h1><p>Card trim is fixed at {gameProfile.cardWidthMm}×{gameProfile.cardHeightMm} mm. Bleed surrounds—but never changes—the trim box.</p></div><div className="status-pill good">{total} cards</div></div>
+      <div className="panel-heading"><div><div className="eyebrow">Step 5 · Printed proxies</div><h1>Set up printed proxies</h1><p>Preview your sheets, choose cutting guides, and export a PDF. Card trim is {gameProfile.cardWidthMm}×{gameProfile.cardHeightMm} mm; bleed sits outside the trim.</p></div><div className="status-pill good">{total} cards</div></div>
+      {props.unresolved > 0 && <div className="message warning">Resolve {props.unresolved} remaining {props.unresolved === 1 ? 'entry' : 'entries'} across the project before exporting.</div>}
       <div className="review-layout">
         <div className="preview-column">
           <div className={`sheet-preview accurate ${previewBusy ? 'loading' : ''}`}>
@@ -985,25 +1027,7 @@ function ReviewPanel(props: {
           </div>
           {preview?.warnings.map((warning) => <div className="layout-warning" key={warning}>{warning}</div>)}
         </div>
-        <div className="settings-card">
-          <h3>MPC card stock</h3>
-          <fieldset className="stock-picker">
-            <legend>Choose physical card thickness</legend>
-            {MPC_STOCK_OPTIONS.map((option) => (
-              <label className={manifest.mpcSettings.stock === option.id ? 'selected' : ''} key={option.id}>
-                <input
-                  type="radio"
-                  name="mpc-stock"
-                  value={option.id}
-                  checked={manifest.mpcSettings.stock === option.id}
-                  onChange={() => props.onUpdateManifest((value) => ({ ...value, mpcSettings: { ...value.mpcSettings, stock: option.id } }))}
-                />
-                <span><strong>{option.id} · {option.title}</strong><small>{option.detail}</small></span>
-              </label>
-            ))}
-          </fieldset>
-          <p className="stock-note">Stock changes the physical card, not artwork size. The MPC bleed and cut geometry stay exactly the same.</p>
-          <div className="settings-divider" />
+        <fieldset className="settings-card" disabled={props.busy}>
           <h3>Print PDF</h3>
           <label>Page size<select value={manifest.printSettings.pageSize} onChange={(event) => { setPageIndex(0); props.onUpdateManifest((value) => ({ ...value, printSettings: { ...value.printSettings, pageSize: event.target.value as 'letter' | 'a4' } })) }}><option value="letter">US Letter</option><option value="a4">A4</option></select></label>
           <label>Print mode<select value={manifest.printSettings.mode} onChange={(event) => { setPageIndex(0); props.onUpdateManifest((value) => ({ ...value, printSettings: { ...value.printSettings, mode: event.target.value as 'fronts' | 'duplex' } })) }}><option value="fronts">Fronts only</option><option value="duplex">Duplex fronts + backs</option></select></label>
@@ -1018,57 +1042,56 @@ function ReviewPanel(props: {
           <label className="checkbox"><input type="checkbox" checked={manifest.printSettings.cropMarks} onChange={(event) => props.onUpdateManifest((value) => ({ ...value, printSettings: { ...value.printSettings, cropMarks: event.target.checked } }))} />Black cut lines to page edge</label>
           <label className="checkbox"><input type="checkbox" checked={manifest.printSettings.blackGutters} onChange={(event) => props.onUpdateManifest((value) => ({ ...value, printSettings: { ...value.printSettings, blackGutters: event.target.checked } }))} />Black gutters between cards</label>
           <p className="print-guide-note">Outside guides stay off the card face; inside guides print on the card corners. Cut lines cross margins and gutters, never the artwork.</p>
-          <div className="spec-list"><div><span>Card trim</span><b>{gameProfile.cardWidthMm} × {gameProfile.cardHeightMm} mm</b></div><div><span>MPC upload</span><b>{gameProfile.mpcCanvasWidthPx} × {gameProfile.mpcCanvasHeightPx} px</b></div><div><span>MPC stock</span><b>{manifest.mpcSettings.stock} · non-foil</b></div></div>
-        </div>
+          <div className="spec-list"><div><span>Card trim</span><b>{gameProfile.cardWidthMm} × {gameProfile.cardHeightMm} mm</b></div><div><span>PDF bleed</span><b>{manifest.printSettings.bleedMm.toFixed(1)} mm</b></div></div>
+        </fieldset>
       </div>
-      <div className="mpc-proof-section">
-        <div className="mpc-proof-copy"><div className="eyebrow">MPC placement proof</div><h2>{manifest.game === 'mtg' ? 'Full card face at finished-card scale.' : 'Inspect the card after the cut.'}</h2><p>{manifest.game === 'mtg' ? 'The complete source fills the cut rectangle at its original proportions. Only minimal fit padding is added if the aspect ratios differ; the separate 36 px black bleed sits outside the finished card. Compare Source face and After trim to check the original border thickness and artwork size.' : 'The finished-size view removes the outer 36 px bleed from every side of the exact MPC upload. The full cut area has a crisp edge-derived border; soft blur starts only beyond a 24 px guard outside the cut.'} Open Upload + guides to inspect details near MPC’s dashed safe-area boundary.</p>
-          <label>Proof artwork group<select value={proofAllocationId} onChange={(event) => setProofAllocationId(event.target.value)}>{proofOptions.map(({ deck, entry, allocation }, index) => <option value={allocation.id} key={allocation.id}>{deck.title} · {entry.rawName} · Artwork {index + 1} ×{allocation.quantity}</option>)}</select></label>
-          {proof && <div className={`proof-status ${proof.proof.placementVerified ? 'good' : 'bad'}`}><strong>{proof.proof.placementVerified ? 'Image dimensions, opacity, and nominal cut placement verified' : 'Derivative failed verification'}</strong><span>{proof.proof.width}×{proof.proof.height} px upload · {proof.proof.trimRect.width}×{proof.proof.trimRect.height} px cut · source fills {(proof.proof.sourceRect.width / proof.proof.trimRect.width * 100).toFixed(1)}% of cut width and {(proof.proof.sourceRect.height / proof.proof.trimRect.height * 100).toFixed(1)}% of cut height</span></div>}
-          {proofError && <div className="message error">{proofError}</div>}
-          {proof && proof.proof.blackBorderVerified !== null && <div className={`proof-status ${proof.proof.blackBorderVerified ? 'good' : 'bad'}`}><strong>{proof.proof.blackBorderVerified ? 'Separate black bleed verified' : 'Bleed failed verification'}</strong><span>{proof.proof.nonBlackBorderPixels} non-black pixels outside the preserved source face</span></div>}
-          <p className="proof-caution">{manifest.game === 'mtg' ? 'The intended cut retains the full source face. MPC’s physical cut can shift; footer text or other details beyond the dashed safe-area guide are not guaranteed by MPC. The guide is a cutting-risk reference, not a box the whole card must fit inside.' : 'The app verifies image geometry, not the position of each card’s text. Check unusual frames in the upload view before ordering; MPC may round corners or vary the physical cut.'}</p>
-        </div>
-        <div className="mpc-proof-display">
-          <div className="mpc-proof-toggle" role="group" aria-label="MPC proof view">
-            <button type="button" aria-pressed={proofView === 'source'} className={proofView === 'source' ? 'active' : ''} onClick={() => setProofView('source')}>Source face</button>
-            <button type="button" aria-pressed={proofView === 'cut'} className={proofView === 'cut' ? 'active' : ''} onClick={() => setProofView('cut')}>After trim</button>
-            <button type="button" aria-pressed={proofView === 'upload'} className={proofView === 'upload' ? 'active' : ''} onClick={() => setProofView('upload')}>Upload + guides</button>
-          </div>
-          <div className={`mpc-proof-frame ${proofView}`} style={{ aspectRatio: proofView === 'source' && proof ? `${proof.sourceWidth} / ${proof.sourceHeight}` : proofView === 'cut' ? `${gameProfile.trimWidthPx} / ${gameProfile.trimHeightPx}` : `${gameProfile.mpcCanvasWidthPx} / ${gameProfile.mpcCanvasHeightPx}` }}>
-            {proof && <img src={proofView === 'source' ? proof.sourceUrl : proofView === 'cut' ? proof.cutUrl : proof.uploadUrl} alt={`${proof.label} ${proofView === 'source' ? 'original source face without added bleed' : proofView === 'cut' ? 'after removing the 36 px MPC bleed' : 'full MPC upload with cut and safe-area guides'}`} />}
-            {proof && proofView === 'upload' && <><div className="trim-guide" style={proofGuideStyle(proof.proof.trimRect, proof.proof)}><span>Cut / trim</span></div>
-              <div className="safe-guide" style={proofGuideStyle(proof.proof.safeRect, proof.proof)}><span>Safe area</span></div></>}
-          </div>
-          <span className="mpc-proof-caption">{proofView === 'source' ? 'Original source face · no added bleed or scaling' : proofView === 'cut' ? 'Exact rectangular cut crop · 36 px removed on every side' : `Full ${gameProfile.mpcCanvasWidthPx}×${gameProfile.mpcCanvasHeightPx} upload · yellow cut line · dashed safe-area line`}</span>
-        </div>
-      </div>
-      <div className="panel-actions"><span>Duplex backs are mirrored by column for physical alignment.</span><button className="button primary" onClick={props.onContinue}>Choose an output</button></div>
+      <div className="panel-actions output-actions"><button type="button" className="button ghost" disabled={props.busy} onClick={props.onChangeOutput}>← Change output</button><span>Duplex backs are mirrored by column for physical alignment.</span><button type="button" className="button primary large" disabled={props.busy || props.unresolved > 0 || total === 0} onClick={props.onPdf}>{props.busy ? 'Exporting PDF…' : 'Export print-ready PDF'}</button></div>
     </div>
   )
 }
 
-function ExportPanel(props: {
+function MpcPanel(props: {
   document: ProjectDocument
   totalCards: number
   unresolved: number
   busy: boolean
   progress: MpcAutomationEvent | null
-  onSave: () => void
-  onPdf: () => void
+  onUpdateManifest: (update: (value: ProjectManifest) => ProjectManifest) => void
+  onChangeOutput: () => void
   onMpc: () => void
   onCancel: () => void
 }) {
   const pct = props.progress?.total ? Math.round((props.progress.completed / props.progress.total) * 100) : 0
+  const manifest = props.document.manifest
+  const gameProfile = GAME_PROFILES[manifest.game]
   return (
-    <div className="panel narrow export-panel">
-      <div className="eyebrow">Step 5</div><h1>Make the deck physical</h1><p className="lede">Save a portable project, create cut-ready sheets, or let the app place every image into a new MPC project.</p>
-      <button className="output-card" onClick={props.onSave}><span className="output-icon">◆</span><div><strong>Save portable project</strong><small>Manifest, settings, and custom artwork in one .proxyproject file</small></div><b>Save</b></button>
-      {props.unresolved > 0 && <div className="message warning">Resolve {props.unresolved} remaining {props.unresolved === 1 ? 'entry' : 'entries'} across the project before creating combined output.</div>}
-      <button className="output-card" disabled={props.busy || props.unresolved > 0} onClick={props.onPdf}><span className="output-icon">▦</span><div><strong>Export print-ready PDF</strong><small>{props.document.manifest.printSettings.pageSize.toUpperCase()} · {props.document.manifest.printSettings.mode} · {props.document.manifest.printSettings.cornerGuides ? 'corner guides' : 'no corner guides'} · {props.document.manifest.printSettings.cropMarks ? 'cut lines' : 'no cut lines'}</small></div><b>Export</b></button>
-      <button className="output-card featured" disabled={props.busy || props.unresolved > 0} onClick={props.onMpc}><span className="output-icon">↗</span><div><strong>Send to MakePlayingCards</strong><small>{props.totalCards} cards from {props.document.manifest.decks.length} {props.document.manifest.decks.length === 1 ? 'deck' : 'decks'} · {props.document.manifest.mpcSettings.stock} · stops at review</small></div><b>Start</b></button>
-      {props.progress && <div className={`progress-card ${props.progress.stage}`}><div><strong>{props.progress.stage.replaceAll('-', ' ')}</strong><span>{props.progress.message}</span></div><div className="progress-track"><i style={{ width: `${pct}%` }} /></div>{props.busy && <button onClick={props.onCancel}>Cancel automation</button>}</div>}
+    <div className="panel narrow mpc-panel">
+      <div className="eyebrow">Step 5 · MakePlayingCards</div><h1>MakePlayingCards setup</h1><p className="lede">Choose your card stock, then start a new MPC project. Proxy Studio handles the artwork sizing, bleed, and image placement automatically.</p>
+      {props.unresolved > 0 && <div className="message warning">Resolve {props.unresolved} remaining {props.unresolved === 1 ? 'entry' : 'entries'} across the project before starting MPC.</div>}
+      <div className="mpc-setup-layout">
+        <div className="settings-card">
+          <h3>MPC card stock</h3>
+          <fieldset className="stock-picker" disabled={props.busy}>
+            <legend>Choose physical card thickness</legend>
+            {MPC_STOCK_OPTIONS.map((option) => (
+              <label className={manifest.mpcSettings.stock === option.id ? 'selected' : ''} key={option.id}>
+                <input type="radio" name="mpc-stock" value={option.id} checked={manifest.mpcSettings.stock === option.id} onChange={() => props.onUpdateManifest((value) => ({ ...value, mpcSettings: { ...value.mpcSettings, stock: option.id } }))} />
+                <span><strong>{option.id} · {option.title}</strong><small>{option.detail}</small></span>
+              </label>
+            ))}
+          </fieldset>
+          <p className="stock-note">Stock changes the physical card, not artwork size. The existing MPC image and bleed treatment stays unchanged.</p>
+        </div>
+        <div className="mpc-project-details">
+          <h3>Your MPC project</h3>
+          <div className="spec-list"><div><span>Cards</span><b>{props.totalCards}</b></div><div><span>Decks combined</span><b>{manifest.decks.length}</b></div><div><span>Card size</span><b>{gameProfile.cardWidthMm} × {gameProfile.cardHeightMm} mm</b></div><div><span>Stock</span><b>{manifest.mpcSettings.stock} · non-foil</b></div><div><span>Card finish</span><b>{manifest.mpcSettings.finish}</b></div></div>
+          <p>A separate Chrome window opens. Proxy Studio creates a new project, uploads the fronts and backs, and stops at MPC review for you to inspect.</p>
+        </div>
+      </div>
+      <button type="button" className="output-card featured" disabled={props.busy || props.unresolved > 0 || props.totalCards === 0} onClick={props.onMpc}><span className="output-icon">↗</span><div><strong>{props.busy ? 'Preparing MPC project…' : 'Begin MPC flow'}</strong><small>{props.totalCards} cards · {manifest.mpcSettings.stock} · opens Chrome · stops at review</small></div><b>{props.busy ? 'Working…' : 'Start'}</b></button>
+      {(props.busy || props.progress) && <div className={`progress-card ${props.progress?.stage ?? 'starting'}`} role="status"><div><strong>{props.progress?.stage.replaceAll('-', ' ') ?? 'Starting MPC'}</strong><span>{props.progress?.message ?? 'Preparing your artwork and browser session…'}</span></div><div className="progress-track"><i style={{ width: `${pct}%` }} /></div>{props.busy && <button type="button" onClick={props.onCancel}>Cancel automation</button>}</div>}
       <div className="checkout-note"><strong>Checkout is always manual.</strong> The app never enters payment details or confirms a purchase.</div>
+      <div className="panel-actions"><button type="button" className="button ghost" disabled={props.busy} onClick={props.onChangeOutput}>← Change output</button></div>
     </div>
   )
 }
@@ -1174,16 +1197,8 @@ function touch(document: ProjectDocument): ProjectDocument {
 }
 
 function unique<T>(values: T[]): T[] { return [...new Set(values)] }
-function proofGuideStyle(rect: MpcPlacementProof['trimRect'], proof: Pick<MpcPlacementProof, 'width' | 'height'>) {
-  return {
-    left: `${(rect.x / proof.width) * 100}%`,
-    top: `${(rect.y / proof.height) * 100}%`,
-    width: `${(rect.width / proof.width) * 100}%`,
-    height: `${(rect.height / proof.height) * 100}%`
-  }
-}
 function normalizeSearch(value: string): string { return value.normalize('NFKD').replace(/[’‘`]/g, "'").toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() }
 function formatError(value: unknown): string { return value instanceof Error ? value.message : String(value) }
 function stepCaption(step: Step): string {
-  return { Import: 'Deck source', Resolve: 'Match cards', Customize: 'Artwork & backs', Review: 'Print setup', Export: 'PDF or MPC' }[step]
+  return { Import: 'Deck source', Resolve: 'Match cards', Customize: 'Artwork & backs', Output: 'MPC or printed proxies', MPC: 'Stock & browser setup', 'Print setup': 'Sheets & PDF export' }[step]
 }

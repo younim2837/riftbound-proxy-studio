@@ -20,7 +20,7 @@ describe('artwork derivatives', () => {
     expect((await sharp(result.filePath).metadata()).hasAlpha).toBe(false)
   })
 
-  it('fills transparent rounded corners and reports safe-contained placement', async () => {
+  it('fills transparent rounded corners without shrinking the complete face', async () => {
     const folder = await mkdtemp(join(tmpdir(), 'rb-transparent-'))
     const source = Buffer.from(`<svg width="744" height="1038" xmlns="http://www.w3.org/2000/svg">
       <rect width="744" height="1038" rx="34" fill="#087f76"/>
@@ -38,15 +38,17 @@ describe('artwork derivatives', () => {
       opaque: true,
       transparentPixels: 0,
       safeRect: { x: 72, y: 72, width: 672, height: 966 },
-      sourceRect: { x: 62, y: 72, width: 692, height: 966 },
+      sourceRect: { x: 36, y: 36, width: 744, height: 1038 },
       sourcePreserved: true,
       sourceContainedInSafeArea: false,
-      placementVerified: true
+      placementVerified: true,
+      edgeBleedVerified: true,
+      nonEdgeBleedPixels: 0
     })
     expect(pixel(0, 0)).not.toEqual([255, 255, 255])
   })
 
-  it('places every source edge inside the MPC safe rectangle', async () => {
+  it('keeps every source edge inside trim without treating the safe guide as the card size', async () => {
     const folder = await mkdtemp(join(tmpdir(), 'rb-safe-edges-'))
     const source = Buffer.from(`<svg width="672" height="966" xmlns="http://www.w3.org/2000/svg">
       <rect width="672" height="966" fill="#18222c"/>
@@ -58,14 +60,15 @@ describe('artwork derivatives', () => {
     const result = await new SharpArtworkPipeline(folder).createMpcDerivative('riftbound', 'safe-edge-card', new Uint8Array(source))
     const { data, info } = await sharp(result.filePath).raw().toBuffer({ resolveWithObject: true })
     const pixel = (x: number, y: number) => [...data.subarray((y * info.width + x) * info.channels, (y * info.width + x) * info.channels + 3)]
-    expect(pixel(408, 72)[0]).toBeGreaterThan(200)
-    expect(pixel(408, 1037)[2]).toBeGreaterThan(200)
-    expect(pixel(72, 555)[1]).toBeGreaterThan(200)
-    expect(pixel(743, 555)[0]).toBeGreaterThan(200)
-    expect(pixel(743, 555)[1]).toBeGreaterThan(150)
+    expect(result.sourceRect).toEqual({ x: 47, y: 36, width: 722, height: 1038 })
+    expect(pixel(408, 36)[0]).toBeGreaterThan(200)
+    expect(pixel(408, 1073)[2]).toBeGreaterThan(200)
+    expect(pixel(47, 555)[1]).toBeGreaterThan(200)
+    expect(pixel(768, 555)[0]).toBeGreaterThan(200)
+    expect(pixel(768, 555)[1]).toBeGreaterThan(150)
   })
 
-  it('uses the full vertical safe span with bounded side overscan for Riftbound artwork', async () => {
+  it('uses full Riftbound trim with only one pixel of aspect-ratio padding', async () => {
     const folder = await mkdtemp(join(tmpdir(), 'rb-max-fit-'))
     const source = Buffer.from(`<svg width="744" height="1039" xmlns="http://www.w3.org/2000/svg">
       <rect width="744" height="1039" fill="#17232d"/>
@@ -77,13 +80,14 @@ describe('artwork derivatives', () => {
     const pipeline = new SharpArtworkPipeline(folder)
     const result = await pipeline.createMpcDerivative('riftbound', 'riftbound-max-fit', new Uint8Array(source))
     const proof = await pipeline.createMpcPlacementProof('riftbound', result)
-    expect(proof.sourceRect).toEqual({ x: 62, y: 72, width: 692, height: 966 })
+    expect(proof.sourceRect).toEqual({ x: 36, y: 36, width: 743, height: 1038 })
     expect(proof.sourceContainedInSafeArea).toBe(false)
     expect(proof.placementVerified).toBe(true)
-    const leftOverscan = proof.safeRect.x - proof.sourceRect.x
-    const rightOverscan = proof.sourceRect.x + proof.sourceRect.width - (proof.safeRect.x + proof.safeRect.width)
-    expect(leftOverscan).toBe(10)
-    expect(rightOverscan).toBe(10)
+    expect(proof.edgeBleedVerified).toBe(true)
+    const rasterSource = await sharp(source).png().toBuffer()
+    const expectedFace = await sharp(rasterSource).resize(744, 1038, { fit: 'inside', kernel: sharp.kernel.lanczos3 }).removeAlpha().png().toBuffer()
+    const expectedUpload = await sharp(expectedFace).extend({ left: 36, top: 36, right: 37, bottom: 36, extendWith: 'copy' }).raw().toBuffer()
+    expect((await sharp(result.filePath).raw().toBuffer()).equals(expectedUpload)).toBe(true)
   })
 
   it('rotates landscape images into portrait output', async () => {

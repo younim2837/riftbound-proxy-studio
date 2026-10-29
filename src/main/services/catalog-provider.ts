@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { CardCatalogProvider } from './interfaces.js'
 import type {
@@ -12,10 +12,11 @@ import type {
 } from '../../shared/contracts.js'
 import { assertAllowedHttpsUrl } from '../../shared/schemas.js'
 import { normalizeCardName } from './deck-importer.js'
+import { parseRiftboundGallery, parseRiftboundSnapshot, RIFTBOUND_CATALOG_VERSION, RIFTBOUND_GALLERY_URL } from './riftbound-gallery.js'
 
-const DEFAULT_CATALOG_URL =
-  'https://raw.githubusercontent.com/slimtreble/Riftbound-card-data/main/cards.json'
 const CATALOG_MAX_AGE_MS = 24 * 60 * 60 * 1000
+const OFFLINE_RETRY_MS = 60_000
+const CATALOG_HOSTS = ['playriftbound.com', 'raw.githubusercontent.com'] as const
 
 interface DevelopmentCatalogCard {
   id: string
@@ -33,8 +34,11 @@ interface DevelopmentCatalogCard {
 }
 
 export class DevelopmentCatalogProvider implements CardCatalogProvider {
-  readonly name = 'development-fixture'
+  readonly name = 'development-riot-gallery'
   private readonly snapshotPath: string
+  private pending: Promise<CatalogSnapshot> | null = null
+  private offlineSnapshot: CatalogSnapshot | null = null
+  private retryAfter = 0
 
   constructor(
     private readonly cacheDirectory: string,
@@ -43,82 +47,67 @@ export class DevelopmentCatalogProvider implements CardCatalogProvider {
     this.snapshotPath = join(cacheDirectory, 'catalog', 'development-catalog.json')
   }
 
-  async load(forceRefresh = false): Promise<CatalogSnapshot> {
-    if (!forceRefresh && (await this.hasFreshSnapshot())) {
-      const cached = JSON.parse(await readFile(this.snapshotPath, 'utf8')) as CatalogSnapshot
-      return normalizeRiftboundSnapshot(cached)
+  load(forceRefresh = false): Promise<CatalogSnapshot> {
+    if (this.pending) {
+      // A manual refresh may arrive while a normal cache read is in flight.
+      // Share an actual online refresh, but never let a cached result swallow it.
+      return forceRefresh
+        ? this.pending.then((snapshot) => snapshot.cacheStatus === 'live' ? snapshot : this.load(true))
+        : this.pending
     }
+    const operation = this.loadSnapshot(forceRefresh)
+    this.pending = operation
+    return operation.finally(() => { if (this.pending === operation) this.pending = null })
+  }
 
-    if (!forceRefresh && this.fixturePath) {
-      try {
-        const fixture = JSON.parse(await readFile(this.fixturePath, 'utf8')) as CatalogSnapshot
-        if (!Array.isArray(fixture.cards) || fixture.cards.length === 0) {
-          throw new Error('The bundled development catalog contains no cards.')
-        }
-        const snapshot: CatalogSnapshot = {
-          ...fixture,
-          cards: fixture.cards.map(normalizeCachedRiftboundCard),
-          source: 'fixture:dev-catalog-v1',
-          game: 'riftbound',
-          developmentOnly: true
-        }
-        await this.saveSnapshot(snapshot)
-        return snapshot
-      } catch (error) {
-        if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') throw error
-      }
+  private async loadSnapshot(forceRefresh: boolean): Promise<CatalogSnapshot> {
+    const source = assertAllowedHttpsUrl(process.env.RIFTBOUND_CATALOG_URL ?? RIFTBOUND_GALLERY_URL, CATALOG_HOSTS).href
+    if (!forceRefresh && this.offlineSnapshot && Date.now() < this.retryAfter) return this.offlineSnapshot
+    const [cached, bundled] = await Promise.all([this.readSnapshot(this.snapshotPath), this.readSnapshot(this.fixturePath)])
+    const now = new Date().toISOString()
+    const age = cached ? Date.now() - Date.parse(cached.fetchedAt) : Infinity
+    if (!forceRefresh && cached?.catalogVersion === RIFTBOUND_CATALOG_VERSION && cached.source === source && age >= 0 && age < CATALOG_MAX_AGE_MS) {
+      return { ...cached, cacheStatus: 'cached' }
     }
+    try {
+      const response = await fetch(source, {
+        headers: { accept: 'text/html,application/json;q=0.9', 'user-agent': 'ProxyStudio/0.4 private-development-adapter' },
+        signal: AbortSignal.timeout(10_000), redirect: 'error'
+      })
+      if (!response.ok) throw new Error(`Card catalog request failed (${response.status}).`)
+      if (response.url) assertAllowedHttpsUrl(response.url, CATALOG_HOSTS)
+      if (Number(response.headers.get('content-length')) > 20 * 1024 * 1024) throw new Error('Catalog response exceeds 20 MB.')
+      const body = await response.text()
+      if (Buffer.byteLength(body, 'utf8') > 20 * 1024 * 1024) throw new Error('Catalog response exceeds 20 MB.')
+      const cards = new URL(source).hostname === 'playriftbound.com'
+        ? parseRiftboundGallery(body)
+        : parseRiftboundSnapshot({ cards: (JSON.parse(body) as DevelopmentCatalogCard[]).map(normalizeDevelopmentCard), source, fetchedAt: now }).cards
+      const snapshot: CatalogSnapshot = { cards, source, fetchedAt: new Date().toISOString(), game: 'riftbound', developmentOnly: true, catalogVersion: RIFTBOUND_CATALOG_VERSION }
+      await this.saveSnapshot(snapshot)
+      this.offlineSnapshot = null
+      return { ...snapshot, checkedAt: snapshot.fetchedAt, cacheStatus: 'live' }
+    } catch (error) {
+      const fallback = [cached && { snapshot: cached, status: 'offline' as const }, bundled && { snapshot: bundled, status: 'bundled' as const }]
+        .filter((value) => value !== null)
+        .sort((left, right) => Date.parse(right.snapshot.fetchedAt) - Date.parse(left.snapshot.fetchedAt))[0]
+      const reason = error instanceof Error ? error.message : String(error)
+      if (!fallback) throw new Error(`Could not refresh the Riftbound catalog and no offline catalog is available: ${reason}`)
+      this.offlineSnapshot = { ...fallback.snapshot, cacheStatus: fallback.status, checkedAt: now, warning: `Online refresh failed; using ${fallback.status === 'bundled' ? 'the bundled' : 'the saved'} catalog. ${reason}` }
+      this.retryAfter = Date.now() + OFFLINE_RETRY_MS
+      return this.offlineSnapshot
+    }
+  }
 
-    const source = process.env.RIFTBOUND_CATALOG_URL ?? DEFAULT_CATALOG_URL
-    assertAllowedHttpsUrl(source, ['raw.githubusercontent.com'])
-    const response = await fetch(source, {
-      headers: { 'user-agent': 'RiftboundProxyStudio/0.1 private-prototype' }
-    })
-    if (!response.ok) {
-      throw new Error(`Card catalog request failed (${response.status}).`)
-    }
-
-    const rawCards = (await response.json()) as DevelopmentCatalogCard[]
-    const snapshot: CatalogSnapshot = {
-      cards: rawCards.map(normalizeDevelopmentCard),
-      source,
-      fetchedAt: new Date().toISOString(),
-      game: 'riftbound',
-      developmentOnly: true
-    }
-    await this.saveSnapshot(snapshot)
-    return snapshot
+  private async readSnapshot(path?: string): Promise<CatalogSnapshot | null> {
+    if (!path) return null
+    try { return parseRiftboundSnapshot(JSON.parse(await readFile(path, 'utf8'))) } catch { return null }
   }
 
   private async saveSnapshot(snapshot: CatalogSnapshot): Promise<void> {
     await mkdir(join(this.cacheDirectory, 'catalog'), { recursive: true })
-    await writeFile(this.snapshotPath, JSON.stringify(snapshot), 'utf8')
-  }
-
-  private async hasFreshSnapshot(): Promise<boolean> {
-    try {
-      const details = await stat(this.snapshotPath)
-      return Date.now() - details.mtimeMs < CATALOG_MAX_AGE_MS
-    } catch {
-      return false
-    }
-  }
-}
-
-function normalizeRiftboundSnapshot(snapshot: CatalogSnapshot): CatalogSnapshot {
-  return {
-    ...snapshot,
-    cards: snapshot.cards.map(normalizeCachedRiftboundCard),
-    game: 'riftbound',
-    developmentOnly: true
-  }
-}
-
-function normalizeCachedRiftboundCard(card: CardRecord): CardRecord {
-  return {
-    ...card,
-    game: 'riftbound',
-    identityId: card.identityId ?? card.baseCode
+    const temporary = `${this.snapshotPath}.${randomUUID()}.tmp`
+    await writeFile(temporary, JSON.stringify(snapshot), 'utf8')
+    await rename(temporary, this.snapshotPath)
   }
 }
 

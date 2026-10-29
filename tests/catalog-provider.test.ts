@@ -7,7 +7,9 @@ import { MtgDeckImporter } from '../src/main/services/deck-importer.js'
 import type { CatalogSnapshot } from '../src/shared/contracts.js'
 
 describe('development catalog provider', () => {
-  it('boots from the versioned local fixture without a network request', async () => {
+  afterEach(() => vi.unstubAllGlobals())
+  it('boots from the versioned local fixture when the live gallery is unavailable', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('Fixture offline') }))
     const folder = await mkdtemp(join(tmpdir(), 'rb-catalog-'))
     const fixturePath = join(folder, 'dev-catalog-v1.json')
     const fixture: CatalogSnapshot = {
@@ -26,7 +28,8 @@ describe('development catalog provider', () => {
     const loaded = await new DevelopmentCatalogProvider(join(folder, 'cache'), fixturePath).load()
 
     expect(loaded.cards).toHaveLength(1)
-    expect(loaded.source).toBe('fixture:dev-catalog-v1')
+    expect(loaded.source).toBe('test fixture')
+    expect(loaded.cacheStatus).toBe('bundled')
   })
 })
 

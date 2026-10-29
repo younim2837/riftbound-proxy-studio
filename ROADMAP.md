@@ -1,5 +1,33 @@
 # Proxy Studio roadmap
 
+## Completed in 0.4.2
+
+- Add Radiance through Riot's live gallery metadata and refresh the offline bundle to 1,408 printings / six sets / 219 Radiance entries.
+- Retain all previous bundled IDs, subtitles, variants/signatures, rune/starter identities, artists, and landscape orientation.
+- Replace fixture-first loading with timestamp/version-aware live refresh, atomic cache saves, request coalescing, and explicit offline fallback/retry behavior.
+- Add Refresh catalog, visible catalog coverage/sync time, and offline/error status without changing existing artwork choices.
+- Add fixture-based parser/cache failure tests, browser refresh regressions, and live Radiance import/artwork verification tooling.
+- Preserve MPC/PDF image-processing geometry and existing project-file compatibility.
+
+## Completed in 0.4.1
+
+- Fit the complete Riftbound face to 63×88 mm MPC trim instead of shrinking to the safety guide.
+- Preserve bordered and borderless source faces with separate crisp edge-copied bleed, rather than a blurred/generated surround.
+- Repair transparent corners using nearest source colors while preserving fully opaque pixels; reject invisible inputs and corrupt cached bleed.
+- Scope cache invalidation to Riftbound MPC, retaining Magic and PDF processing/cache profiles.
+- Add pixel regression coverage for original border width, borderless edges, transparency, orientation, illustrative shifted cuts, and cache rejection.
+- Audit six real Riot images and populate a temporary MPC project through editor/final review, capturing screenshots without checkout.
+- A physical Riftbound sampler has been ordered; inspection remains pending. Keep the current treatment unchanged until feedback arrives, with no claim of perfect manufacturing or all source-edge details inside the safe guide.
+
+## Completed in 0.4.0
+
+- Keep the shared Import → Resolve → Customize steps, then explicitly choose MPC or printed proxies.
+- Dedicated MPC page with S30/S33/A35 stock, combined-project summary, browser launch/progress/cancel, and manual checkout.
+- Dedicated print-setup page with sheet preview, print-only settings, and direct PDF export.
+- Remove the MPC placement-proof UI without changing backend image processing, upload checks, or sampled MPC border/scale behavior.
+- Preserve both settings groups when switching output paths and reopening existing projects; no schema migration.
+- Offline browser regression coverage for both games, branch isolation, stocks, combined decks, save/reopen, cancellation, and unresolved cards.
+
 ## Completed in 0.3.7
 
 - Always-visible artwork confirmation/cancel bar outside both scrolling panels.

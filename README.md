@@ -5,18 +5,49 @@ A Windows desktop application for importing Riftbound or Magic: The Gathering de
 ## Current prototype workflow
 
 1. Choose Riftbound or Magic, then import one or more compatible deck lists into a project. Riftbound also supports Piltover Archive URLs and deck codes; Magic supports common Arena, MTGO, Moxfield, Archidekt, and Commander text formats.
-2. Navigate each named deck and resolve ambiguous or missing cards against the development catalog.
+2. Navigate each named deck and resolve ambiguous or missing cards. Riftbound syncs metadata from Riot's live gallery, with saved/bundled catalogs available offline; Magic uses Scryfall lookup.
 3. Split repeated cards into artwork groups, then compare official printings in a large visual gallery, choose custom fronts, assign a shared proxy-marked back, or add per-group back overrides.
-4. Configure Letter/A4, fronts-only/duplex, 0–2 mm bleed, colored corner guides, full-page cutting lines, and black gutters. Preview every sheet before exporting.
-5. Save `.proxyproject` (or open an existing `.rbproxy`), export PDF, or start MPC automation.
+4. Choose **MakePlayingCards** or **Printed proxies / PDF**. The first three steps are shared; the setup pages are separate.
+5. For MPC, choose S30, S33, or A35 stock and begin browser automation directly. For printed proxies, configure Letter/A4, fronts-only/duplex, 0–2 mm bleed, colored corner guides, full-page cutting lines, and black gutters, then preview and export the PDF on the same page.
+6. Save `.proxyproject` at any time using Save (or open an existing `.rbproxy`). Switch output paths without losing artwork, quantities, or either set of settings.
 
 MPC automation selects the live quantity bracket and the project's chosen S30, S33, or A35 stock from the page, uploads unique images, assigns slots, and stops at review. It never enters payment information or confirms an order.
 
 ## Download
 
-Version 0.3.7 Windows installer, portable executable, and portable ZIP are available as a [GitHub preview release](https://github.com/younim2837/riftbound-proxy-studio/releases/tag/v0.3.7). Use 0.3.7 for the artwork-gallery confirmation fix and the full-scale Magic MPC treatment introduced in 0.3.6. Earlier versions either generate colored surrounds or shrink the card inside an oversized border.
+Version 0.4.2 Windows installer, portable executable, and portable ZIP are available as a [GitHub preview release](https://github.com/younim2837/riftbound-proxy-studio/releases/tag/v0.4.2). It includes the separate MPC/PDF workflows, full-scale Riftbound border treatment, Radiance catalog and refresh controls, and the previous artwork-gallery and Magic fixes. SHA-256 checksums are included with the release downloads.
 
 On October 25, 2026, the project owner reported that the follow-up physical MPC sampler had good borders and card scale, similar to a real Magic card, with some remaining image softness. This is positive physical feedback for that sample, not a guarantee of identical results across every image, stock, finish, or manufacturing run. The 0.3.7 gallery fix does not alter the sampled image-processing geometry.
+
+A sampler using the new Riftbound treatment has been ordered; physical inspection is pending. The current release remains a preview. Digital pixel checks and MPC editor/review screenshots verify intended image placement, but cannot guarantee a particular physical cut.
+
+## 0.4.2 Radiance and catalog refresh
+
+- The Riftbound development adapter now reads structured metadata directly from Riot's English card gallery instead of the stale third-party JSON. The refreshed bundle contains 1,408 printings across six sets, including 219 Radiance entries, as fetched October 25, 2026. No official image bytes are bundled.
+- Live metadata retains stable Riot IDs, champion subtitles, rune/starter codes, signed/alternate-art distinctions, artist names, and landscape orientation. All 1,180 previous bundled IDs are retained in the refreshed gallery snapshot.
+- Cached live data is reused for up to 24 hours based on its actual sync timestamp and catalog format version, not file modification time. A stale/legacy cache triggers an online check; the bundled fixture is only an offline fallback. Manual refresh bypasses cache freshness and offline retry backoff.
+- A visible catalog bar shows printing/set counts, Radiance availability, the last sync or bundled-snapshot timestamp, and **Refresh catalog**. Offline/error fallback is explicit, and refreshing does not replace existing project artwork or quantities.
+- Malformed/empty/changed gallery responses, unapproved hosts, and failed downloads cannot replace a good saved catalog. Successful snapshots are saved atomically; concurrent requests share one load.
+- `npm run verify:catalog:riftbound` checks the live catalog, prior IDs, Radiance import/resolution, and five on-demand official artwork/MPC derivatives. Add `-- --update-fixture` to mechanically regenerate the metadata bundle after those checks pass. The snapshot remains a development-only adapter, not a substitute for Riot registration/API approval for distribution.
+- `npm run test:ui:catalog` exercises forced refresh, newly available card resolution/artwork, offline/error preservation, and game-switch races using offline UI fixtures. MPC/PDF image-processing profiles are unchanged.
+
+## 0.4.1 full-scale Riftbound MPC borders
+
+- Riftbound's complete face now fits the 744×1038 px cut rectangle at `(36,36)` on MPC's 816×1110 px / 63×88 mm template. It is no longer reduced to the internal safety guide.
+- Aspect-preserving fit keeps all source edges. Original black/decorative borders retain their scale; borderless artwork remains borderless. Only minimal aspect-ratio padding and the external 36 px bleed are edge-copied, with no blurred or newly painted surround.
+- Transparent corners are filled using nearby source colors. Fully opaque face pixels are retained; no black/white corner matte is imposed on borderless art. Fully transparent images are rejected.
+- The pre-upload check verifies dimensions, opacity, and that every generated padding/bleed pixel matches the clamped source edge. Unsafe cached bleed is blocked. Only Riftbound MPC cache keys changed; Magic and PDF profiles/keys remain unchanged.
+- `npm run verify:mpc:riftbound` audits six real Riot CDN printings, compares every fully opaque normalized face pixel, and writes source/nominal-trim comparisons outside the repo. `-- --mpc` additionally populates a temporary MPC project through review and captures editor/review screenshots, without checkout.
+- Six real Riftbound images passed the digital audit and MPC editor/review run. Physical Riftbound samples of this treatment have not been verified. Full-scale source footers outside MPC's safe-area guide remain vulnerable to a shifted physical cut; neither pixel tests nor browser previews guarantee manufacturing.
+
+## 0.4.0 separate output workflows
+
+- Import → Resolve → Customize now leads to an explicit choice between MPC and printed proxies.
+- The MPC page contains card-stock selection, a combined project summary, launch/progress/cancel controls, and the manual-checkout reminder. No print-sheet setup or PDF preview is loaded on this path.
+- The printed-proxy page contains only paper, layout, guides, bleed, duplex, page preview, and direct PDF export. MPC stock and placement-proof controls are absent.
+- Removed the MPC placement-proof UI and automatic proof requests. Internal derivative validation, MPC upload checks, and the physically sampled image/bleed treatment remain unchanged.
+- Existing project files remain compatible. Both settings groups stay saved when switching paths; the output choice itself is session navigation, not a project schema change.
+- `npm run test:ui:output` checks both games, branch isolation, all stocks, combined decks, settings retention/save/reopen, cancellation, and unresolved-card output gates using offline fixtures and captured IPC calls, without visiting MPC.
 
 ## 0.3.7 artwork confirmation fix
 

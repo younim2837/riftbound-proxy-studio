@@ -17,3 +17,5 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: npm run test:ui:artwork
+      - run: npm run test:ui:output
+      - run: npm run test:ui:catalog

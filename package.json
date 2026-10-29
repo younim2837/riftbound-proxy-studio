@@ -1,6 +1,6 @@
 {
   "name": "riftbound-proxy-studio",
-  "version": "0.3.7",
+  "version": "0.4.2",
   "private": true,
   "description": "A desktop studio for preparing Riftbound and Magic playtest projects for PDF and MakePlayingCards.",
   "main": "./out/main/index.js",
@@ -11,8 +11,12 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "test:ui:artwork": "esbuild scripts/verify-artwork-gallery.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/verify-artwork-gallery.mjs && node dist/verify-artwork-gallery.mjs",
+    "test:ui:output": "esbuild scripts/verify-output-flow.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/verify-output-flow.mjs && node dist/verify-output-flow.mjs",
+    "test:ui:catalog": "esbuild scripts/verify-catalog-refresh.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/verify-catalog-refresh.mjs && node dist/verify-catalog-refresh.mjs",
     "test:live:scryfall": "set RUN_SCRYFALL_LIVE=1&& vitest run tests/scryfall-live.test.ts",
     "verify:mpc:black-border": "esbuild scripts/verify-mpc-black-border.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/verify-mpc-black-border.mjs && node dist/verify-mpc-black-border.mjs",
+    "verify:mpc:riftbound": "esbuild scripts/verify-riftbound-mpc.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/verify-riftbound-mpc.mjs && node dist/verify-riftbound-mpc.mjs",
+    "verify:catalog:riftbound": "esbuild scripts/update-riftbound-catalog.ts --bundle --platform=node --format=esm --packages=external --outfile=dist/update-riftbound-catalog.mjs && node dist/update-riftbound-catalog.mjs",
     "test:watch": "vitest",
     "pack": "npm run build && electron-builder --win nsis portable",
     "pack:dir": "npm run build && electron-builder --win --dir"
